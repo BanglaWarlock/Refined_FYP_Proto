@@ -134,7 +134,11 @@ TaskHandle_t h_status    = nullptr;
 void setup() {
     Serial.begin(115200);
 
-    pinMode(Vext);
+#ifdef Vext
+    // LilyGO/TTGO boards: Vext is the GPIO controlling the LoRa power rail
+    pinMode(Vext, OUTPUT);
+    digitalWrite(Vext, LOW);
+#endif
 
     // Detect abnormal reboot before anything else runs
     {
