@@ -204,7 +204,7 @@ relayed back up. The master retries un-ACKed commands every
 | `CAD_TIMEOUT_MS`          | 100 ms | scan itself is ~2 ms; generous |
 | `CAD_MAX_TRIES`           | 5     | then fail open |
 | `POST_TX_LISTEN_MS`       | 100 ms | half-duplex turnaround guard |
-| `DISC_WINDOW_MS`          | 800 ms | SF7 responses land well within |
+| `DISC_WINDOW_MS`          | 2 s   | starts at DISCOVER enqueue — covers CAD delay + airtime + responder jitter |
 | `DISC_INTERVAL_MS`        | 10 s  | |
 | `REG_TIMEOUT_MS`          | 6 s   | |
 | `CHILD_OFFLINE_TIMEOUT_MS`| 45 s  | 4 missed HBs; field ≈ 180 s |

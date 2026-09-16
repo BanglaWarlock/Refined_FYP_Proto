@@ -46,7 +46,9 @@ void handle_child_discover(const lora_packet *pkt) {
         if (strcmp(r.id, pkt->src_id) != 0) other_count++;
     xSemaphoreGive(children_mutex);
     if (other_count >= max_children) return;
-    vTaskDelay(pdMS_TO_TICKS(50 + esp_random() % 200));
+    // spread responders across the window — multiple relays heard the same
+    // DISCOVER and must not transmit on top of each other (SF7 airtime 65 ms)
+    vTaskDelay(pdMS_TO_TICKS(50 + esp_random() % 500));
     char pl[PACKET_MAX_LEN], raw[PACKET_MAX_LEN];
     snprintf(pl, sizeof(pl), "id=%s,depth=%u,cur=%u,max=%u", own_node_id, own_depth, other_count, max_children);
     format_packet(raw, sizeof(raw), new_msg_id(), own_node_id, pkt->src_id, MSG_DISC_RESP, pl);

@@ -96,7 +96,9 @@ typedef struct {
 #define CAD_MAX_TRIES                 5
 #define POST_TX_LISTEN_MS           100
 #define BEACON_INTERVAL_MS        10000
-#define DISC_WINDOW_MS              800
+#define DISC_WINDOW_MS             2000  // window starts at DISCOVER *enqueue* —
+                                           // must cover CAD delay + airtime + master
+                                           // processing + its jitter (§5), so keep loose
 #define DISC_INTERVAL_MS          10000
 #define REG_TIMEOUT_MS             6000
 #define CHILD_OFFLINE_TIMEOUT_MS  45000  // passive silence → start probing
