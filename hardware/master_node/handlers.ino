@@ -79,8 +79,10 @@ void handle_discover(const lora_packet *pkt) {
 
 void handle_reg_req(const lora_packet *pkt) {
     char claimed[NODE_ID_MAX_LEN];
-    if (!get_field(pkt->payload, "id", claimed, sizeof(claimed))) {
-        Serial.printf("[REG] Dropped — no id= from %s\n", pkt->src_id);
+    // hard-validate the claimed id — FIFO residue can glue garbage into the
+    // payload mid-transport; a corrupt id must never enter the registry
+    if (!get_field(pkt->payload, "id", claimed, sizeof(claimed)) || !id_valid(claimed)) {
+        Serial.printf("[REG] Dropped — bad id from %s\n", pkt->src_id);
         return;
     }
 
@@ -231,7 +233,7 @@ void handle_hb_sensor(const lora_packet *pkt) {
 void handle_alert(const lora_packet *pkt) {
     // id= in payload is the originating node; src_id is the delivering hop
     char origin[NODE_ID_MAX_LEN];
-    if (!get_field(pkt->payload, "id", origin, sizeof(origin)))
+    if (!get_field(pkt->payload, "id", origin, sizeof(origin)) || !id_valid(origin))
         strlcpy(origin, pkt->src_id, sizeof(origin));
     char atype[16] = "unknown";
     get_field(pkt->payload, "type", atype, sizeof(atype));

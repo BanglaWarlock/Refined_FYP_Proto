@@ -19,8 +19,14 @@ void handle_disc_resp(const lora_packet *pkt) {
 void handle_reg_ack(const lora_packet *pkt) {
     const char *p;
     if ((p = strstr(pkt->payload, "parent=")) != nullptr) {
-        strlcpy(active_parent_id, p + 7, NODE_ID_MAX_LEN);
-        char *c = strchr(active_parent_id, ','); if (c) *c = '\0';
+        char cand[NODE_ID_MAX_LEN];
+        strlcpy(cand, p + 7, NODE_ID_MAX_LEN);
+        char *c = strchr(cand, ','); if (c) *c = '\0';
+        if (!id_valid(cand)) {
+            Serial.println("[REG] REG_ACK with corrupt parent id — ignored");
+            return;   // stay REGISTERING → timeout → re-discover
+        }
+        strlcpy(active_parent_id, cand, NODE_ID_MAX_LEN);
     }
     if ((p = strstr(pkt->payload, "depth=")) != nullptr) own_depth = (uint8_t)atoi(p + 6);
     last_parent_seen_ms = millis();
@@ -59,10 +65,12 @@ void handle_child_discover(const lora_packet *pkt) {
 
 void handle_child_reg_req(const lora_packet *pkt) {
     if (is_crash_pending()) return;
-    const char *id_f = strstr(pkt->payload, "id=");
-    if (!id_f) return;
-    char claimed[NODE_ID_MAX_LEN]; strlcpy(claimed, id_f + 3, sizeof(claimed));
-    char *c = strchr(claimed, ','); if (c) *c = '\0';
+    char claimed[NODE_ID_MAX_LEN];
+    // hard-validate — same FIFO-glue defense as the master's REG_REQ handler
+    if (!get_field(pkt->payload, "id", claimed, sizeof(claimed)) || !id_valid(claimed)) {
+        Serial.printf("[RELAY] REG_REQ dropped — bad id from %s\n", pkt->src_id);
+        return;
+    }
     xSemaphoreTake(children_mutex, portMAX_DELAY);
     bool registered = false;
     for (auto &r : child_regs) {
