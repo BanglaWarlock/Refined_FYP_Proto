@@ -201,9 +201,19 @@ function seenAgo(iso) {
 
 async function refreshNodes() {
   nodesCache = await (await fetch("/api/v1/nodes")).json();
+
+  // village filter dropdown (from live data — no villages, no options)
+  const sel = $("#village-filter");
+  const cur = sel.value;
+  const villages = [...new Set(nodesCache.map((n) => n.village).filter(Boolean))].sort();
+  sel.innerHTML = `<option value="">All villages</option>` +
+    villages.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join("");
+  sel.value = [...sel.options].some((o) => o.value === cur) ? cur : "";
+
   const tb = $("#nodes-table tbody");
   tb.innerHTML = "";
   for (const n of nodesCache) {
+    if (sel.value && n.village !== sel.value) continue;
     const lvl = n.water_level ?? 0;
     const tr = el("tr", "", `
       <td><b>${esc(n.node_id)}</b></td>

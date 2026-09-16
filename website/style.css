@@ -86,6 +86,11 @@ h2 { font-size: 15px; margin-bottom: 12px; color: var(--accent); text-transform:
 .center { text-align: center; margin-top: 10px; }
 
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.filter-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+#village-filter {
+  background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+  border-radius: 6px; padding: 4px 8px; font-size: 13px;
+}
 th { text-align: left; color: var(--dim); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--line); }
 td { padding: 8px; border-bottom: 1px solid var(--line); }
 
