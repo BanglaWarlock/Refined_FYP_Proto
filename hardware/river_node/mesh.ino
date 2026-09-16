@@ -100,9 +100,18 @@ void discoveryTask(void *pv) {
             candidate_count = 0;
             xSemaphoreGive(candidates_mutex);
             char raw[PACKET_MAX_LEN];
-            format_packet(raw, sizeof(raw), new_msg_id(), own_node_id, "ALL", MSG_DISCOVER, "");
+            // DISCOVER with a known id — the response window must not start
+            // until this frame has actually left the antenna (TX runs in a
+            // separate task: queue wait + CAD + airtime all precede it)
+            uint64_t disc_mid = new_msg_id();
+            format_packet(raw, sizeof(raw), disc_mid, own_node_id, "ALL", MSG_DISCOVER, "");
             enqueueLora(String(raw));
             Serial.println("[DISC] Sent DISCOVER");
+            uint32_t waited = 0;
+            while (last_tx_msg_id != disc_mid && waited < 3000) {
+                vTaskDelay(pdMS_TO_TICKS(10));
+                waited += 10;
+            }
             vTaskDelay(pdMS_TO_TICKS(DISC_WINDOW_MS));
 
             xSemaphoreTake(candidates_mutex, portMAX_DELAY);

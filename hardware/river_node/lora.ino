@@ -22,6 +22,21 @@ void IRAM_ATTR onLoraCadDone(bool activity) {
     cad_done_flag = true;
 }
 
+// ── Radio state tracking (debug visibility + discovery window sync)
+#define RADIO_RX  0
+#define RADIO_TX  1
+#define RADIO_CAD 2
+volatile uint8_t  radio_state    = RADIO_RX;
+volatile uint64_t last_tx_msg_id = 0;   // msg_id of the most recently transmitted frame
+
+static void radio_set(uint8_t s) {
+    if (radio_state != s) {
+        static const char *nm[] = {"RX", "TX", "CAD"};
+        radio_state = s;
+        Serial.printf("[RADIO] → %s\n", nm[s]);
+    }
+}
+
 uint64_t new_msg_id() { return (uint64_t)esp_random() << 32 | esp_random(); }
 
 bool is_duplicate(uint64_t id) {
@@ -194,6 +209,7 @@ void setupLoRa() {
     LoRa.onReceive(onLoRaReceive);   // fast path when DIO0 works
     LoRa.onCadDone(onLoraCadDone);
     LoRa.receive();
+    radio_set(RADIO_RX);
     Serial.println("[LORA] OK");
 }
 
@@ -204,6 +220,7 @@ static bool channel_idle(TickType_t timeout) {
     cad_activity    = false;
     cad_done_flag   = false;
     cad_in_progress = true;
+    radio_set(RADIO_CAD);
     LoRa.channelActivityDetection();
     TickType_t waited = 0;
     while (!cad_done_flag && waited < timeout) {
@@ -211,6 +228,7 @@ static bool channel_idle(TickType_t timeout) {
         waited += 2;
     }
     LoRa.receive();                    // CAD leaves the chip in standby
+    radio_set(RADIO_RX);
     cad_in_progress = false;
     if (!cad_done_flag) return true;   // fail open
     return !cad_activity;
@@ -227,10 +245,12 @@ static bool channel_wait_idle() {
 
 // Blocking transmit + return to RX. Caller holds lora_mutex.
 static void lora_send_locked(const char *raw) {
+    radio_set(RADIO_TX);
     LoRa.beginPacket();
     LoRa.print(raw);
     LoRa.endPacket();   // returns on TX-done — post-TX state is exact
     LoRa.receive();
+    radio_set(RADIO_RX);
 }
 
 // Frame harvesting: FIFO state across TX/CAD churn is not always trustworthy
@@ -297,7 +317,7 @@ void loraRxTask(void *pv) {
             raw[n++] = (char)b;
         }
         float snr = LoRa.packetSnr(); int rssi = LoRa.packetRssi();
-        if (!isr) LoRa.receive();                 // parsePacket left RX mode — re-arm
+        if (!isr) { LoRa.receive(); radio_set(RADIO_RX); }   // parsePacket left RX mode — re-arm
         xSemaphoreGive(lora_mutex);
         if (n < 22) continue;
         raw[n] = '\0';
@@ -586,6 +606,7 @@ void loraProcTask(void *pv) {
 // ── loraTxTask (core 1, pri 5) — alerts first, then normal FIFO.
 // Every transmission is CAD-gated (PROTOCOL §2).
 void loraTxTask(void *pv) {
+
     for (;;) {
         // 1. Reliable alert queue
         if (node_state == NODE_OPERATIONAL && active_parent_id[0]) {
@@ -605,6 +626,7 @@ void loraTxTask(void *pv) {
                     bool sent = channel_wait_idle();
                     if (sent) {
                         lora_send_locked(raw);
+                        last_tx_msg_id = mid;      // discovery window sync
                         Serial.printf("[ALERT TX] %s\n", raw);
                     }
                     xSemaphoreGive(lora_mutex);
@@ -636,6 +658,7 @@ void loraTxTask(void *pv) {
                 xSemaphoreTake(lora_mutex, portMAX_DELAY);
                 if (channel_wait_idle()) {
                     lora_send_locked(pkt.c_str());
+                    last_tx_msg_id = strtoull(pkt.c_str(), nullptr, 16);
                     Serial.printf("[LORA TX] %s\n", pkt.c_str());
                     // anchor HB retry window to actual TX time
                     if (pending_hb.sent_msg_id != 0) {
