@@ -10,6 +10,7 @@ on:
     branches: [main]
     paths:
       - "iot-service/**"
+      - "website/**"
       - ".github/workflows/deploy-iot.yml"
   workflow_dispatch:
 
@@ -36,6 +37,7 @@ jobs:
           rsync -az --delete \
             iot-service/parser iot-service/api \
             iot-service/docker-compose.yml iot-service/mosquitto \
+            iot-service/nginx website \
             ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/opt/floodwatch/
 
       - name: Write env file

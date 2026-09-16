@@ -1,0 +1,89 @@
+/* FloodWatch showcase — dark dashboard theme */
+:root {
+  --bg: #0d1421; --panel: #141d2f; --panel2: #1a2540; --line: #24314f;
+  --text: #dbe4f5; --dim: #8294b4; --accent: #3fa7ff;
+  --ok: #35c48d; --warn: #f5b83d; --bad: #f55d5d;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 15px/1.5 "Segoe UI", system-ui, sans-serif;
+  min-height: 100vh; display: flex; flex-direction: column;
+}
+
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 28px; background: var(--panel); border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: 12px; }
+.logo { font-size: 28px; }
+h1 { font-size: 20px; letter-spacing: .5px; }
+.sub { color: var(--dim); font-size: 12.5px; }
+.conn { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--dim); }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--warn); display: inline-block; }
+.conn.live .dot { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.conn.dead .dot { background: var(--bad); }
+
+nav { display: flex; gap: 6px; padding: 10px 28px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.tab {
+  background: none; border: 1px solid transparent; color: var(--dim);
+  padding: 8px 18px; font-size: 14px; border-radius: 8px; cursor: pointer;
+}
+.tab:hover { color: var(--text); }
+.tab.active { background: var(--panel2); color: var(--text); border-color: var(--line); }
+
+main { flex: 1; padding: 24px 28px; max-width: 1280px; width: 100%; margin: 0 auto; }
+.panel { display: none; }
+.panel.active { display: block; }
+
+.cards { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 22px; }
+.card {
+  flex: 1; min-width: 150px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 12px; padding: 18px; text-align: center;
+}
+.num { font-size: 30px; font-weight: 600; }
+.lbl { color: var(--dim); font-size: 13px; margin-top: 4px; }
+
+.grid-2 { display: grid; grid-template-columns: 1.4fr 1fr; gap: 18px; }
+@media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+
+.box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; margin-bottom: 18px; }
+h2 { font-size: 15px; margin-bottom: 12px; color: var(--accent); text-transform: uppercase; letter-spacing: .8px; }
+.hint { color: var(--dim); font-size: 12.5px; }
+.center { text-align: center; margin-top: 10px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th { text-align: left; color: var(--dim); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+td { padding: 8px; border-bottom: 1px solid var(--line); }
+
+.pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.pill.on   { background: rgba(53,196,141,.15); color: var(--ok); }
+.pill.off  { background: rgba(245,93,93,.15);  color: var(--bad); }
+.pill.L0 { background: #22304f; color: var(--dim); }
+.pill.L1 { background: rgba(245,184,61,.15); color: var(--warn); }
+.pill.L2 { background: rgba(245,140,61,.2);  color: #f5883d; }
+.pill.L3 { background: rgba(245,93,93,.2);   color: var(--bad); }
+
+.topo { font-family: ui-monospace, Consolas, monospace; font-size: 13px; color: var(--dim); white-space: pre; margin-top: 10px; }
+.master-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line); }
+
+#feed { display: flex; flex-direction: column; gap: 8px; max-height: 65vh; overflow-y: auto; }
+.evt { background: var(--panel2); border: 1px solid var(--line); border-left: 4px solid var(--dim); border-radius: 8px; padding: 10px 14px; }
+.evt .t { color: var(--dim); font-size: 12px; }
+.evt.flood_level { border-left-color: var(--bad); }
+.evt.node_lost, .evt.node_offline, .evt.battery, .evt.gps_signal_lost { border-left-color: var(--warn); }
+.evt.node_online, .evt.node_announce, .evt.gps_restored { border-left-color: var(--ok); }
+.evt b { color: var(--text); }
+
+#map-canvas { height: 65vh; border-radius: 12px; border: 1px solid var(--line); }
+
+.diagram {
+  font-family: ui-monospace, Consolas, monospace; font-size: 12px; line-height: 1.35;
+  color: var(--dim); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 8px; padding: 14px; overflow-x: auto; margin-bottom: 14px;
+}
+.points { padding-left: 20px; display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
+.levels { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 10px; font-size: 14px; }
+.levels div { display: flex; align-items: center; gap: 8px; }
+
+footer { text-align: center; color: var(--dim); font-size: 12.5px; padding: 16px; border-top: 1px solid var(--line); }
