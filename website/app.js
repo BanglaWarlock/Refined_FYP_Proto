@@ -18,8 +18,9 @@ const LEVEL_NAME = ["dry", "1 ft", "2 ft", "3 ft"];
 const LEVEL_COLOR = ["#94a3b8", "#f5b83d", "#f5883d", "#f55d5d"];
 const EVENT_ICON = {
   flood_level: "🌊", node_lost: "📡", node_offline: "📴", node_online: "✅",
-  battery: "🔋", gps_signal_lost: "🛰️", gps_restored: "🛰️", node_announce: "📍",
-  master_online: "🖥️", master_offline: "🖥️", topology: "🕸️", heartbeat: "💧",
+  battery: "🔋", gps_signal_lost: "🛰️", gps_restored: "🛰️", gps_moved: "📍",
+  node_announce: "📍", master_online: "🖥️", master_offline: "🖥️",
+  topology: "🕸️", heartbeat: "💧",
 };
 
 /* ── Theme ────────────────────────────────────────────────────────── */
@@ -268,17 +269,22 @@ function connectSSE() {
   const es = new EventSource("/api/v1/events/stream");
   es.onopen  = () => setConn(true, "live");
   es.onerror = () => setConn(false, "reconnecting…");
-  es.onmessage = (m) => {
-    const e = JSON.parse(m.data);
-    addEvent(e.type ?? "message", e.data ?? {}, e.ts);
-    if (["heartbeat", "flood_level", "node_online", "node_offline"].includes(e.type)) {
+
+  // The backend sends TYPED events (event: <type>) — onmessage only fires
+  // for untyped events, so we must listen per type (no wildcard support).
+  const handle = (e) => {
+    const evt = JSON.parse(e.data);
+    addEvent(evt.type ?? "message", evt.data ?? {}, evt.ts);
+    if (["heartbeat", "flood_level", "node_online", "node_offline"].includes(evt.type)) {
       refreshStats(); refreshNodes();
-      if (e.data?.node_id === selectedId) selectNode(selectedId);
+      if (evt.data?.node_id === selectedId) selectNode(selectedId);
     }
-    if (["node_announce", "topology", "node_lost"].includes(e.type)) {
+    if (["node_announce", "topology", "node_lost"].includes(evt.type)) {
       refreshNodes(); refreshMasters();
     }
   };
+  for (const t of Object.keys(EVENT_ICON)) es.addEventListener(t, handle);
+  es.addEventListener("message", handle);   // fallback for untyped
 }
 
 function setConn(live, text) {
