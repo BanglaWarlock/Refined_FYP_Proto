@@ -99,7 +99,8 @@ typedef struct {
 #define DISC_WINDOW_MS             2000  // window starts at DISCOVER *enqueue* —
                                            // must cover CAD delay + airtime + master
                                            // processing + its jitter (§5), so keep loose
-#define DISC_INTERVAL_MS          10000
+#define DISC_INTERVAL_MS           5000  // re-discover cadence while unregistered
+                                           // — fast re-acquisition at marginal links
 #define REG_TIMEOUT_MS             6000
 #define CHILD_OFFLINE_TIMEOUT_MS  45000  // passive silence → start probing
 #define PROBE_INTERVAL_MS          3000  // between liveness probes
