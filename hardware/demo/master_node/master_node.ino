@@ -59,15 +59,11 @@ typedef struct {
 // ── Radio state (debug visibility)
 #define RADIO_RX  0
 #define RADIO_TX  1
-#define RADIO_CAD 2
 volatile uint8_t radio_state = RADIO_RX;
-volatile bool    cad_done_flag   = false;
-volatile bool    cad_in_progress = false;
-volatile bool    cad_activity    = false;
 
 static void radio_set(uint8_t s) {
     if (radio_state != s) {
-        static const char *nm[] = {"RX", "TX", "CAD"};
+        static const char *nm[] = {"RX", "TX"};
         radio_state = s;
         Serial.printf("[RADIO] → %s\n", nm[s]);
     }

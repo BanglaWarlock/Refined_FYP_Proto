@@ -1,20 +1,9 @@
-// Radio layer — identical discipline to the mesh build: CAD-before-TX via
-// register polling, dual-path RX (DIO0 ISR + parsePacket poll), frame
-// harvesting against FIFO residue, hard frame validation.
-
-volatile int lora_rx_size  = 0;   // byte count from the freshest RxDone (ISR path)
-volatile bool lora_rx_ready = false;
-
-void IRAM_ATTR onLoRaReceive(int packetSize) {
-    if (packetSize <= 0 || packetSize > PACKET_MAX_LEN - 1) return;
-    lora_rx_size  = packetSize;
-    lora_rx_ready = true;
-}
-
-void IRAM_ATTR onLoraCadDone(bool activity) {
-    cad_activity  = activity;
-    cad_done_flag = true;
-}
+// Radio layer — deliberately simple for the 1:1 demo:
+//   RX  : poll parsePacket() every 3 ms (no DIO0, no interrupts)
+//   TX  : blocking send, back in RX immediately
+//   CDC : none — collisions are near-impossible at 1:1, and the ACK/retry
+//         layer recovers the rest
+// Frame harvesting + hard validation still guard against FIFO residue.
 
 uint64_t new_msg_id() { return (uint64_t)esp_random() << 32 | esp_random(); }
 
@@ -142,51 +131,17 @@ void setupLoRa() {
     LoRa.setCodingRate4(5);
     LoRa.setTxPower(LORA_TX_PWR);
     LoRa.enableCrc();
-    LoRa.onReceive(onLoRaReceive);   // fast path when DIO0 works
-    LoRa.onCadDone(onLoraCadDone);
-    LoRa.receive();
+    LoRa.receive();                  // RX continuous — polled, no DIO0 needed
     radio_set(RADIO_RX);
     Serial.println("[LORA] OK");
-}
-
-// One CAD scan; fails open on timeout. Completion via cadResult() register
-// poll — the DIO0 ISR is only a fast path when the interrupt works.
-static bool channel_idle(TickType_t timeout) {
-    cad_activity    = false;
-    cad_done_flag   = false;
-    cad_in_progress = true;
-    radio_set(RADIO_CAD);
-    LoRa.channelActivityDetection();
-    TickType_t waited = 0;
-    int result = -1;
-    while (waited < timeout) {
-        if (cad_done_flag) { result = cad_activity ? 1 : 0; break; }
-        int r = LoRa.cadResult();
-        if (r >= 0) { result = r; break; }
-        vTaskDelay(pdMS_TO_TICKS(2));
-        waited += 2;
-    }
-    LoRa.receive();
-    radio_set(RADIO_RX);
-    cad_in_progress = false;
-    if (result < 0) return true;     // fail open
-    return result == 0;
-}
-
-static bool channel_wait_idle() {
-    for (uint8_t i = 0; i < CAD_MAX_TRIES; i++) {
-        if (channel_idle(pdMS_TO_TICKS(CAD_TIMEOUT_MS))) return true;
-        vTaskDelay(pdMS_TO_TICKS(CAD_BACKOFF_MS + esp_random() % (4 * CAD_BACKOFF_MS)));
-    }
-    return false;
 }
 
 static void lora_send_locked(const char *raw) {
     radio_set(RADIO_TX);
     LoRa.beginPacket();
     LoRa.print(raw);
-    LoRa.endPacket();
-    LoRa.receive();
+    LoRa.endPacket();                // blocking — returns on TX-done
+    LoRa.receive();                  // straight back to RX continuous
     radio_set(RADIO_RX);
 }
 
@@ -221,27 +176,20 @@ static void harvest_frames(char *buf, int n, int rssi, float snr) {
     }
 }
 
-// ── loraRxTask — dual path: ISR flag (DIO0 alive) or parsePacket poll.
+// ── loraRxTask — pure parsePacket() polling. The RxDone flag waits in the
+// chip's IRQ register until we read it (3 ms poll vs 65 ms airtime), so no
+// interrupt is needed and a dead/flapping DIO0 is irrelevant.
 void loraRxTask(void *pv) {
     char raw[PACKET_MAX_LEN];
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(3));
-        if (cad_in_progress) continue;
-        bool isr = lora_rx_ready;
-        if (isr) { lora_rx_ready = false; }
-
         xSemaphoreTake(lora_mutex, portMAX_DELAY);
-        int sz;
-        if (isr) {
-            sz = lora_rx_size;
-        } else {
-            sz = LoRa.parsePacket();
-            if (sz > PACKET_MAX_LEN - 1) sz = PACKET_MAX_LEN - 1;
-        }
+        int sz = LoRa.parsePacket();
         if (sz <= 0) {
             xSemaphoreGive(lora_mutex);
             continue;
         }
+        if (sz > PACKET_MAX_LEN - 1) sz = PACKET_MAX_LEN - 1;
         int n = 0;
         while (n < sz) {
             int b = LoRa.read();
@@ -249,7 +197,8 @@ void loraRxTask(void *pv) {
             raw[n++] = (char)b;
         }
         float snr = LoRa.packetSnr(); int rssi = LoRa.packetRssi();
-        if (!isr) { LoRa.receive(); radio_set(RADIO_RX); }
+        LoRa.receive();              // parsePacket left RX mode — re-arm
+        radio_set(RADIO_RX);
         xSemaphoreGive(lora_mutex);
         if (n < 22) continue;
         raw[n] = '\0';
@@ -326,12 +275,10 @@ void loraTxTask(void *pv) {
                     format_packet(raw, sizeof(raw), mid, NODE_ID, active_parent_id, a.type, a.payload);
                     xSemaphoreGive(alert_mutex);
                     xSemaphoreTake(lora_mutex, portMAX_DELAY);
-                    if (channel_wait_idle()) {
-                        lora_send_locked(raw);
-                        last_tx_msg_id = mid;
-                        Serial.printf("[ALERT TX] %s\n", raw);
-                    }
+                    lora_send_locked(raw);
+                    last_tx_msg_id = mid;
                     xSemaphoreGive(lora_mutex);
+                    Serial.printf("[ALERT TX] %s\n", raw);
                     vTaskDelay(pdMS_TO_TICKS(POST_TX_LISTEN_MS));
                 } else {
                     xSemaphoreGive(alert_mutex);
@@ -349,16 +296,10 @@ void loraTxTask(void *pv) {
                 lora_tx_list.erase(lora_tx_list.begin());
                 xSemaphoreGive(lora_tx_mutex);
                 xSemaphoreTake(lora_mutex, portMAX_DELAY);
-                if (channel_wait_idle()) {
-                    lora_send_locked(pkt.c_str());
-                    last_tx_msg_id = strtoull(pkt.c_str(), nullptr, 16);
-                    Serial.printf("[LORA TX] %s\n", pkt.c_str());
-                } else {
-                    xSemaphoreTake(lora_tx_mutex, portMAX_DELAY);
-                    lora_tx_list.insert(lora_tx_list.begin(), pkt);   // re-queue
-                    xSemaphoreGive(lora_tx_mutex);
-                }
+                lora_send_locked(pkt.c_str());
+                last_tx_msg_id = strtoull(pkt.c_str(), nullptr, 16);
                 xSemaphoreGive(lora_mutex);
+                Serial.printf("[LORA TX] %s\n", pkt.c_str());
                 vTaskDelay(pdMS_TO_TICKS(POST_TX_LISTEN_MS));
             } else {
                 xSemaphoreGive(lora_tx_mutex);

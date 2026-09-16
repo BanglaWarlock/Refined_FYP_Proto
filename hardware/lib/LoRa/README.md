@@ -1,8 +1,8 @@
-# Vendored LoRa library (sandeepmistry master, patched)
+# Vendored LoRa library — PRISTINE sandeepmistry (your original working copy)
 
-Do NOT reinstall this library from the Library Manager — this copy carries two fixes our firmware depends on:
+This is the unmodified library your original FYP firmware used. The demo
+firmware uses no interrupts and no CAD, so no patches are needed.
 
-1. ISR-safe SPI spinlock: the DIO0 ISR and task code share one SPI bus; without the spinlock the ISR corrupts in-flight FIFO reads (ghost packets).
-2. Selective IRQ clearing: the DIO0 ISR only clears flags it consumes. A flapping/noisy DIO0 line must not wipe pending RxDone flags that the parsePacket() polling path services.
-
-To install on a new machine: copy src/LoRa.cpp and src/LoRa.h over your Arduino libraries/LoRa/src/.
+The patched variant (SPI spinlock + selective IRQ + cadResult) that the
+mesh-chaining build requires is archived at hardware/mesh-chaining/lib/LoRa/.
+Install either by copying its src/ over Arduino/libraries/LoRa/src/.

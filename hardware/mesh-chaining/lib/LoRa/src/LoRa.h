@@ -59,9 +59,12 @@ public:
 
 #ifndef ARDUINO_SAMD_MKRWAN1300
   void onReceive(void(*callback)(int));
+  void onCadDone(void(*callback)(boolean));
+  int  cadResult();                // -1 = scan pending, 0 = idle, 1 = activity
   void onTxDone(void(*callback)());
 
   void receive(int size = 0);
+  void channelActivityDetection(void);
 #endif
   void idle();
   void sleep();
@@ -77,6 +80,8 @@ public:
   void disableCrc();
   void enableInvertIQ();
   void disableInvertIQ();
+  void enableLowDataRateOptimize();
+  void disableLowDataRateOptimize();
   
   void setOCP(uint8_t mA); // Over Current Protection control
   
@@ -105,6 +110,7 @@ private:
   long getSignalBandwidth();
 
   void setLdoFlag();
+  void setLdoFlagForced(const boolean);
 
   uint8_t readRegister(uint8_t address);
   void writeRegister(uint8_t address, uint8_t value);
@@ -122,6 +128,7 @@ private:
   int _packetIndex;
   int _implicitHeaderMode;
   void (*_onReceive)(int);
+  void (*_onCadDone)(boolean);
   void (*_onTxDone)();
 };
 

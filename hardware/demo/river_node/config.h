@@ -11,7 +11,7 @@
 // Radio — 433 MHz SX1278. SF7 = short range / fast (indoor demo);
 // use SF10 for outdoor range tests.
 #define LORA_SF        7
-#define LORA_TX_PWR    17
+#define LORA_TX_PWR    20
 
 // Pin wiring (this node's physical build)
 #define PIN_LORA_SS     5

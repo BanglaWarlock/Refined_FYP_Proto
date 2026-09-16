@@ -3,6 +3,14 @@
 
 #include <LoRa.h>
 
+// DIO0 ISR (onDio0Rise) does SPI register access concurrently with task-side
+// reads (parsePacket/read/FIFO). Without this spinlock the ISR corrupts
+// in-flight task SPI transfers — observed as FIFO pointer drift, dropped /
+// phantom bytes and ghost "concatenated packets". Task code enters via
+// singleTransfer (portENTER_CRITICAL, disables interrupts on the core, so
+// the ISR cannot fire mid-transaction); the ISR enters with the _ISR variant.
+static portMUX_TYPE lora_spinlock = portMUX_INITIALIZER_UNLOCKED;
+
 // registers
 #define REG_FIFO                 0x00
 #define REG_OP_MODE              0x01
@@ -47,6 +55,7 @@
 #define MODE_TX                  0x03
 #define MODE_RX_CONTINUOUS       0x05
 #define MODE_RX_SINGLE           0x06
+#define MODE_CAD                 0x07
 
 // PA config
 #define PA_BOOST                 0x80
@@ -55,6 +64,8 @@
 #define IRQ_TX_DONE_MASK           0x08
 #define IRQ_PAYLOAD_CRC_ERROR_MASK 0x20
 #define IRQ_RX_DONE_MASK           0x40
+#define IRQ_CAD_DONE_MASK          0x04
+#define IRQ_CAD_DETECTED_MASK      0x01
 
 #define RF_MID_BAND_THRESHOLD    525E6
 #define RSSI_OFFSET_HF_PORT      157
@@ -76,6 +87,7 @@ LoRaClass::LoRaClass() :
   _packetIndex(0),
   _implicitHeaderMode(0),
   _onReceive(NULL),
+  _onCadDone(NULL),
   _onTxDone(NULL)
 {
   // overide Stream timeout value
@@ -281,7 +293,7 @@ long LoRaClass::packetFrequencyError()
   freqError += static_cast<int32_t>(readRegister(REG_FREQ_ERROR_LSB));
 
   if (readRegister(REG_FREQ_ERROR_MSB) & 0b1000) { // Sign bit is on
-     freqError -= 524288; // B1000'0000'0000'0000'0000
+     freqError -= 524288; // 0b1000'0000'0000'0000'0000
   }
 
   const float fXtal = 32E6; // FXOSC: crystal oscillator (XTAL) frequency (2.5. Chip Specification, p. 14)
@@ -377,6 +389,24 @@ void LoRaClass::onReceive(void(*callback)(int))
   }
 }
 
+void LoRaClass::onCadDone(void(*callback)(boolean))
+{
+  _onCadDone = callback;
+
+  if (callback) {
+    pinMode(_dio0, INPUT);
+#ifdef SPI_HAS_NOTUSINGINTERRUPT
+    SPI.usingInterrupt(digitalPinToInterrupt(_dio0));
+#endif
+    attachInterrupt(digitalPinToInterrupt(_dio0), LoRaClass::onDio0Rise, RISING);
+  } else {
+    detachInterrupt(digitalPinToInterrupt(_dio0));
+#ifdef SPI_HAS_NOTUSINGINTERRUPT
+    SPI.notUsingInterrupt(digitalPinToInterrupt(_dio0));
+#endif
+  }
+}
+
 void LoRaClass::onTxDone(void(*callback)())
 {
   _onTxDone = callback;
@@ -409,6 +439,23 @@ void LoRaClass::receive(int size)
   }
 
   writeRegister(REG_OP_MODE, MODE_LONG_RANGE_MODE | MODE_RX_CONTINUOUS);
+}
+
+void LoRaClass::channelActivityDetection(void)
+{
+  writeRegister(REG_DIO_MAPPING_1, 0x80);// DIO0 => CADDONE
+  writeRegister(REG_OP_MODE, MODE_LONG_RANGE_MODE | MODE_CAD);
+}
+
+// Pollable CAD result — lets sketches run CAD without a working DIO0
+// interrupt. Returns -1 while the scan is pending, then 0 (idle) / 1
+// (activity) and clears the consumed CAD flags.
+int LoRaClass::cadResult()
+{
+  int irqFlags = readRegister(REG_IRQ_FLAGS);
+  if ((irqFlags & IRQ_CAD_DONE_MASK) == 0) return -1;
+  writeRegister(REG_IRQ_FLAGS, IRQ_CAD_DONE_MASK | IRQ_CAD_DETECTED_MASK);
+  return ((irqFlags & IRQ_CAD_DETECTED_MASK) != 0) ? 1 : 0;
 }
 #endif
 
@@ -558,6 +605,13 @@ void LoRaClass::setLdoFlag()
   writeRegister(REG_MODEM_CONFIG_3, config3);
 }
 
+void LoRaClass::setLdoFlagForced(const boolean ldoOn)
+{
+  uint8_t config3 = readRegister(REG_MODEM_CONFIG_3);
+  bitWrite(config3, 3, ldoOn);
+  writeRegister(REG_MODEM_CONFIG_3, config3);
+}
+
 void LoRaClass::setCodingRate4(int denominator)
 {
   if (denominator < 5) {
@@ -602,6 +656,16 @@ void LoRaClass::disableInvertIQ()
 {
   writeRegister(REG_INVERTIQ,  0x27);
   writeRegister(REG_INVERTIQ2, 0x1d);
+}
+
+void LoRaClass::enableLowDataRateOptimize()
+{
+   setLdoFlagForced(true);
+}
+
+void LoRaClass::disableLowDataRateOptimize()
+{
+   setLdoFlagForced(false);
 }
 
 void LoRaClass::setOCP(uint8_t mA)
@@ -693,10 +757,16 @@ void LoRaClass::handleDio0Rise()
 {
   int irqFlags = readRegister(REG_IRQ_FLAGS);
 
-  // clear IRQ's
-  writeRegister(REG_IRQ_FLAGS, irqFlags);
-
-  if ((irqFlags & IRQ_PAYLOAD_CRC_ERROR_MASK) == 0) {
+  // Clear ONLY the flags this handler actually consumes. A spurious DIO0
+  // rise (noisy wiring) must not wipe a pending RxDone flag that the
+  // polling parsePacket() path is about to service — the two RX paths
+  // coexist by never clearing each other's unhandled flags.
+  if ((irqFlags & IRQ_CAD_DONE_MASK) != 0) {
+    writeRegister(REG_IRQ_FLAGS, IRQ_CAD_DONE_MASK | IRQ_CAD_DETECTED_MASK);
+    if (_onCadDone) {
+      _onCadDone((irqFlags & IRQ_CAD_DETECTED_MASK) != 0);
+    }
+  } else if ((irqFlags & IRQ_PAYLOAD_CRC_ERROR_MASK) == 0) {
 
     if ((irqFlags & IRQ_RX_DONE_MASK) != 0) {
       // received a packet
@@ -709,13 +779,16 @@ void LoRaClass::handleDio0Rise()
       writeRegister(REG_FIFO_ADDR_PTR, readRegister(REG_FIFO_RX_CURRENT_ADDR));
 
       if (_onReceive) {
+        writeRegister(REG_IRQ_FLAGS, IRQ_RX_DONE_MASK);
         _onReceive(packetLength);
       }
-    }
-    else if ((irqFlags & IRQ_TX_DONE_MASK) != 0) {
+      // no RX callback registered: leave RxDone set for parsePacket()
+    } else if ((irqFlags & IRQ_TX_DONE_MASK) != 0) {
       if (_onTxDone) {
+        writeRegister(REG_IRQ_FLAGS, IRQ_TX_DONE_MASK);
         _onTxDone();
       }
+      // no TxDone callback: blocking endPacket() clears the flag itself
     }
   }
 }
@@ -734,21 +807,23 @@ uint8_t LoRaClass::singleTransfer(uint8_t address, uint8_t value)
 {
   uint8_t response;
 
-  digitalWrite(_ss, LOW);
-
+  portENTER_CRITICAL(&lora_spinlock);
   _spi->beginTransaction(_spiSettings);
+  digitalWrite(_ss, LOW);
   _spi->transfer(address);
   response = _spi->transfer(value);
-  _spi->endTransaction();
-
   digitalWrite(_ss, HIGH);
+  _spi->endTransaction();
+  portEXIT_CRITICAL(&lora_spinlock);
 
   return response;
 }
 
 ISR_PREFIX void LoRaClass::onDio0Rise()
 {
+  portENTER_CRITICAL_ISR(&lora_spinlock);
   LoRa.handleDio0Rise();
+  portEXIT_CRITICAL_ISR(&lora_spinlock);
 }
 
 LoRaClass LoRa;
