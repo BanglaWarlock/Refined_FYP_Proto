@@ -216,6 +216,8 @@ void setupLoRa() {
 // One CAD scan. Leaves the radio back in RX. Fails open on CAD timeout —
 // availability beats politeness; ACK/retry recovers any resulting loss.
 // Called with lora_mutex held; cad_in_progress keeps the RX poller out.
+// Completion is detected via the cadResult() register poll — the DIO0 ISR
+// (cad_done_flag) is just a faster path when the interrupt works.
 static bool channel_idle(TickType_t timeout) {
     cad_activity    = false;
     cad_done_flag   = false;
@@ -223,15 +225,19 @@ static bool channel_idle(TickType_t timeout) {
     radio_set(RADIO_CAD);
     LoRa.channelActivityDetection();
     TickType_t waited = 0;
-    while (!cad_done_flag && waited < timeout) {
+    int result = -1;                   // -1 pending, 0 idle, 1 activity
+    while (waited < timeout) {
+        if (cad_done_flag) { result = cad_activity ? 1 : 0; break; }
+        int r = LoRa.cadResult();
+        if (r >= 0) { result = r; break; }
         vTaskDelay(pdMS_TO_TICKS(2));
         waited += 2;
     }
     LoRa.receive();                    // CAD leaves the chip in standby
     radio_set(RADIO_RX);
     cad_in_progress = false;
-    if (!cad_done_flag) return true;   // fail open
-    return !cad_activity;
+    if (result < 0) return true;       // fail open
+    return result == 0;
 }
 
 // CAD + random backoff; caller must hold lora_mutex across scan + transmit.

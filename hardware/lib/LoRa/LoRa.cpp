@@ -446,6 +446,17 @@ void LoRaClass::channelActivityDetection(void)
   writeRegister(REG_DIO_MAPPING_1, 0x80);// DIO0 => CADDONE
   writeRegister(REG_OP_MODE, MODE_LONG_RANGE_MODE | MODE_CAD);
 }
+
+// Pollable CAD result — lets sketches run CAD without a working DIO0
+// interrupt. Returns -1 while the scan is pending, then 0 (idle) / 1
+// (activity) and clears the consumed CAD flags.
+int LoRaClass::cadResult()
+{
+  int irqFlags = readRegister(REG_IRQ_FLAGS);
+  if ((irqFlags & IRQ_CAD_DONE_MASK) == 0) return -1;
+  writeRegister(REG_IRQ_FLAGS, IRQ_CAD_DONE_MASK | IRQ_CAD_DETECTED_MASK);
+  return ((irqFlags & IRQ_CAD_DETECTED_MASK) != 0) ? 1 : 0;
+}
 #endif
 
 void LoRaClass::idle()

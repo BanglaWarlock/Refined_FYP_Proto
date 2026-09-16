@@ -60,6 +60,7 @@ public:
 #ifndef ARDUINO_SAMD_MKRWAN1300
   void onReceive(void(*callback)(int));
   void onCadDone(void(*callback)(boolean));
+  int  cadResult();                // -1 = scan pending, 0 = idle, 1 = activity
   void onTxDone(void(*callback)());
 
   void receive(int size = 0);
