@@ -1,0 +1,17 @@
+# Arduino / PlatformIO build artifacts
+build/
+*.hex
+*.elf
+*.bin
+*.map
+
+# Secrets (never commit credentials or env files)
+credentials.h
+.env
+*.env
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
