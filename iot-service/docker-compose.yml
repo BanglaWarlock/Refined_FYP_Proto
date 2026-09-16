@@ -1,0 +1,46 @@
+# FloodWatch showcase stack — one host (droplet), MongoDB stays on Atlas.
+# Secrets come from /opt/floodwatch/.env (created by the deploy workflow).
+
+services:
+
+  # MQTT broker — the master nodes point here once you switch off the public
+  # broker. For the demo with broker.emqx.io you may leave this stopped:
+  #   docker compose stop mosquitto
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+    restart: unless-stopped
+
+  # Internal event bus between parser and API
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  # MQTT -> MongoDB + Redis
+  parser:
+    build: ./parser
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # REST + SSE for the website / apps
+  api:
+    build: ./api
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+volumes:
+  mosquitto_data:

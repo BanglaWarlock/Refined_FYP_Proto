@@ -1,0 +1,62 @@
+name: Deploy IoT services to droplet
+
+# Builds images ON the droplet (no registry needed for this scale) and
+# restarts the compose stack. Requires repo secrets:
+#   SSH_HOST, SSH_USER, SSH_KEY, MONGO_URI, MQTT_BROKER, MQTT_DEPLOY
+# (REDIS_URL is internal to compose — see docker-compose.yml)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "iot-service/**"
+      - ".github/workflows/deploy-iot.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-iot
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          install -m 600 /dev/null ~/.ssh/id_ed25519
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Rsync service files
+        run: |
+          rsync -az --delete \
+            iot-service/parser iot-service/api \
+            iot-service/docker-compose.yml iot-service/mosquitto \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/opt/floodwatch/
+
+      - name: Write env file
+        run: |
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+            "cat > /opt/floodwatch/.env <<'EOF'
+          MONGO_URI=${{ secrets.MONGO_URI }}
+          MQTT_BROKER=${{ secrets.MQTT_BROKER }}
+          MQTT_DEPLOY=${{ secrets.MQTT_DEPLOY }}
+          REDIS_URL=redis://redis:6379
+          EOF"
+
+      - name: Build and restart stack
+        run: |
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+            "cd /opt/floodwatch && \
+             docker compose build --pull && \
+             docker compose up -d --remove-orphans && \
+             docker image prune -f"
+
+      - name: Health check
+        run: |
+          sleep 8
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+            "curl -sf http://localhost:8000/ || (docker logs --tail 50 floodwatch-api-1; exit 1)"
