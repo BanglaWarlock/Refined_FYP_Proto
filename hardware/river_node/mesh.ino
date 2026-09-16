@@ -80,6 +80,16 @@ void send_alert_node_lost(const char *child, uint32_t down_s) {
     Serial.printf("[ALERT] node_lost %s (down %.0fs) queued\n", child, (float)down_s);
 }
 
+// Liveness probe for a silent direct child — the child's CMD_ACK proves it
+// alive (PROTOCOL §5).
+void send_probe_ping(const char *child) {
+    char pl[PACKET_MAX_LEN], raw[PACKET_MAX_LEN];
+    snprintf(pl, sizeof(pl), "target=%s,data=ping", child);
+    format_packet(raw, sizeof(raw), new_msg_id(), own_node_id, child, MSG_CMD, pl);
+    enqueueLora(String(raw));
+    Serial.printf("[PROBE] ping → %s\n", child);
+}
+
 void discoveryTask(void *pv) {
     for (;;) {
         switch (node_state) {
@@ -143,21 +153,44 @@ void discoveryTask(void *pv) {
                 send_alert_crash(pending_crash_reason);
             }
             vTaskDelay(pdMS_TO_TICKS(1000));
-            // evict silent children — report node_lost, then free the slot
+            // child liveness: passive last-seen; on timeout probe before
+            // declaring missing — never report a node_lost on a hunch (§5)
             uint32_t now = millis();
+            char ping_ids[4][NODE_ID_MAX_LEN]; uint8_t n_ping = 0;
+            char lost_ids[4][NODE_ID_MAX_LEN]; uint32_t lost_s[4]; uint8_t n_lost = 0;
             xSemaphoreTake(children_mutex, portMAX_DELAY);
             for (auto it = child_regs.begin(); it != child_regs.end(); ) {
-                if (it->last_seen_ms > 0 && (now - it->last_seen_ms > CHILD_OFFLINE_TIMEOUT_MS)) {
-                    uint32_t down_s = (now - it->last_seen_ms) / 1000;
-                    char id[NODE_ID_MAX_LEN];
-                    strlcpy(id, it->id, sizeof(id));
-                    it = child_regs.erase(it);
-                    xSemaphoreGive(children_mutex);
-                    send_alert_node_lost(id, down_s);
-                    xSemaphoreTake(children_mutex, portMAX_DELAY);
-                } else { ++it; }
+                child_reg_t &r = *it;
+                bool silent = (r.last_seen_ms > 0 &&
+                               now - r.last_seen_ms > CHILD_OFFLINE_TIMEOUT_MS);
+                if (silent && r.probe_sent_ms == 0) {
+                    r.probe_sent_ms = now;
+                    r.probe_tries   = 1;
+                    if (n_ping < 4) { strlcpy(ping_ids[n_ping++], r.id, NODE_ID_MAX_LEN); }
+                    ++it;
+                } else if (r.probe_sent_ms && now - r.probe_sent_ms >= PROBE_INTERVAL_MS) {
+                    if (r.probe_tries >= PROBE_MAX_TRIES) {
+                        Serial.printf("[RELAY] Child %s silent through %u probes — missing\n",
+                                      r.id, r.probe_tries);
+                        if (n_lost < 4) {
+                            strlcpy(lost_ids[n_lost], r.id, NODE_ID_MAX_LEN);
+                            lost_s[n_lost] = (now - r.last_seen_ms) / 1000;
+                            n_lost++;
+                        }
+                        it = child_regs.erase(it);
+                    } else {
+                        r.probe_tries++;
+                        r.probe_sent_ms = now;
+                        if (n_ping < 4) { strlcpy(ping_ids[n_ping++], r.id, NODE_ID_MAX_LEN); }
+                        ++it;
+                    }
+                } else {
+                    ++it;
+                }
             }
             xSemaphoreGive(children_mutex);
+            for (uint8_t i = 0; i < n_ping; i++) send_probe_ping(ping_ids[i]);
+            for (uint8_t i = 0; i < n_lost; i++) send_alert_node_lost(lost_ids[i], lost_s[i]);
             break;
         }
 
@@ -184,8 +217,7 @@ void heartbeatTask(void *pv) {
         vTaskDelay(pdMS_TO_TICKS(ALERT_RETRY_MS));
 
         if (node_state != NODE_OPERATIONAL) {
-            pending_hb     = {};
-            last_hb_ack_ms = 0;
+            pending_hb = {};
             continue;
         }
 
@@ -198,8 +230,10 @@ void heartbeatTask(void *pv) {
 
         uint32_t now = millis();
         if (pending_hb.sent_msg_id == 0) {
-            // no HB in flight — send when interval elapsed since last ACK
-            if (last_hb_ack_ms == 0 || (now - last_hb_ack_ms >= HEARTBEAT_INTERVAL_MS)) {
+            // adaptive heartbeat: any packet received from the parent already
+            // proves it alive (last_parent_seen_ms) — only transmit when the
+            // parent has been silent for a full interval
+            if (last_parent_seen_ms == 0 || (now - last_parent_seen_ms >= HEARTBEAT_INTERVAL_MS)) {
                 pending_hb.retries = 0;
                 send_heartbeat();
                 Serial.printf("[HB] Sent → %s\n", active_parent_id);
@@ -210,9 +244,8 @@ void heartbeatTask(void *pv) {
                 if (pending_hb.retries >= HB_MAX_RETRIES) {
                     Serial.printf("[HB] No ACK after %u tries — parent %s lost\n",
                                   HB_MAX_RETRIES, active_parent_id);
-                    pending_hb     = {};
-                    last_hb_ack_ms = 0;
-                    node_state     = NODE_LOST_PARENT;
+                    pending_hb = {};
+                    node_state = NODE_LOST_PARENT;
                 } else {
                     Serial.printf("[HB] Retry %u/%u → %s\n",
                                   pending_hb.retries + 1, HB_MAX_RETRIES, active_parent_id);

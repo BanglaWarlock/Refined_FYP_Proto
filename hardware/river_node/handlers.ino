@@ -25,8 +25,7 @@ void handle_reg_ack(const lora_packet *pkt) {
     last_parent_seen_ms = millis();
     // hold first HB until the registration burst settles; the master's offline
     // timeout (>> HB interval) makes this safe
-    pending_hb     = {};
-    last_hb_ack_ms = millis();
+    pending_hb = {};
     node_state = NODE_OPERATIONAL;
     // re-arm all pending alerts so they fire immediately to the new parent
     xSemaphoreTake(alert_mutex, portMAX_DELAY);

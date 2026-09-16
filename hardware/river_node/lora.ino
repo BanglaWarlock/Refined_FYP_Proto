@@ -295,8 +295,7 @@ void loraProcTask(void *pv) {
             xSemaphoreGive(alert_mutex);
             if (ack_id != 0 && pending_hb.sent_msg_id == ack_id) {
                 Serial.printf("[HB] ACK from %s — parent alive\n", pkt.src_id);
-                pending_hb     = {};
-                last_hb_ack_ms = millis();
+                pending_hb = {};
             }
             break;
         }
@@ -463,6 +462,16 @@ void loraProcTask(void *pv) {
         }
 
         case MSG_CMD_ACK:
+            // a child's CMD_ACK answers our liveness probe — clear probe state
+            xSemaphoreTake(children_mutex, portMAX_DELAY);
+            for (auto &r : child_regs) {
+                if (strcmp(r.id, pkt.src_id) == 0) {
+                    r.probe_sent_ms = 0;
+                    r.probe_tries   = 0;
+                    break;
+                }
+            }
+            xSemaphoreGive(children_mutex);
             if (node_state == NODE_OPERATIONAL && active_parent_id[0]) {
                 char relay[PACKET_MAX_LEN];
                 format_packet(relay, sizeof(relay), new_msg_id(), pkt.src_id, active_parent_id, MSG_CMD_ACK, pkt.payload);

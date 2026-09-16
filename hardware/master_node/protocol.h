@@ -45,6 +45,8 @@ typedef struct {
     uint32_t last_seq;            // HB seq — packet-loss accounting
     uint32_t pkt_rx;
     uint32_t pkt_lost;
+    uint32_t probe_sent_ms;       // non-zero = probing for liveness before
+    uint8_t  probe_tries;         // declaring missing (PROTOCOL §5)
     double   lat;
     double   lng;
     bool     gps_fix;
@@ -69,7 +71,9 @@ typedef struct {
 
 // ── Timing (demo profile — docs/PROTOCOL.md §9)
 #define BEACON_INTERVAL_MS        10000
-#define NODE_OFFLINE_TIMEOUT_MS   45000  // matches river CHILD_OFFLINE_TIMEOUT
+#define NODE_OFFLINE_TIMEOUT_MS   45000  // passive silence → start probing
+#define PROBE_INTERVAL_MS          3000  // between liveness probes
+#define PROBE_MAX_TRIES               3  // silent through all → declare missing
 #define STATUS_PRINT_INTERVAL_MS  10000
 #define CMD_RETRY_INTERVAL_MS      3000
 #define POST_TX_LISTEN_MS           100

@@ -51,6 +51,8 @@ typedef struct {
 typedef struct {
     char     id[NODE_ID_MAX_LEN];
     uint32_t last_seen_ms;
+    uint32_t probe_sent_ms;       // non-zero = probing before node_lost (§5)
+    uint8_t  probe_tries;
 } child_reg_t;
 
 // Reliable alert entry. Retried every ALERT_RETRY_MS(+jitter) until an
@@ -97,7 +99,9 @@ typedef struct {
 #define DISC_WINDOW_MS              800
 #define DISC_INTERVAL_MS          10000
 #define REG_TIMEOUT_MS             6000
-#define CHILD_OFFLINE_TIMEOUT_MS  45000
+#define CHILD_OFFLINE_TIMEOUT_MS  45000  // passive silence → start probing
+#define PROBE_INTERVAL_MS          3000  // between liveness probes
+#define PROBE_MAX_TRIES               3  // silent through all → node_lost
 #define STATUS_INTERVAL_MS        10000
 #define FLOAT_DEBOUNCE_MS            50
 #define GPS_FIX_TIMEOUT_MS        45000

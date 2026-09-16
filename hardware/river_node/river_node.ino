@@ -53,7 +53,6 @@ char     active_parent_id[NODE_ID_MAX_LEN]  = "";
 uint32_t last_parent_seen_ms                = 0;
 uint8_t  own_depth                          = 1;
 pending_hb_t pending_hb                    = {};
-uint32_t last_hb_ack_ms                     = 0;
 
 // Alert freshness counter — random per-boot base so a reboot never replays
 // lower seqs than pre-reboot alerts (docs/PROTOCOL.md §3). Seeded in setup().

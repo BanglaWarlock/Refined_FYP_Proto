@@ -114,12 +114,22 @@ River node FSM: `DISCOVERING → REGISTERING → OPERATIONAL ⇄ LOST_PARENT`.
 2. **REG_REQ** (unicast) → **REG_ACK** (`id,parent,depth`). On ACK the node
    goes OPERATIONAL and immediately sends **ANNOUNCE** (reliable, includes GPS
    home position once calibrated).
-3. Parent liveness: the child's HB is ACK-tracked
-   (`HB_RETRY_MS × HB_MAX_RETRIES`); on exhaustion → `LOST_PARENT` → back to
-   DISCOVERING (children cleared, pending alerts re-armed for the new parent).
-4. Child liveness: a parent evicts a silent child after
-   `CHILD_OFFLINE_TIMEOUT_MS` and — new in v2 — queues a **`node_lost`**
-   alert (see §7) before freeing the slot.
+3. Parent liveness (child side): the child tracks the parent via **any**
+   packet received *from* the parent (ACK, beacon, command, REG_ACK all count
+   as keepalive). An HB is transmitted **only when the parent has been silent
+   for a full `HEARTBEAT_INTERVAL_MS`** — adaptive heartbeat: an active
+   network generates no periodic HB traffic at all. An in-flight HB is
+   ACK-tracked (`HB_RETRY_MS × HB_MAX_RETRIES`); on exhaustion →
+   `LOST_PARENT` → back to DISCOVERING (children cleared, pending alerts
+   re-armed for the new parent).
+4. Child liveness (parent side): the parent's `last_seen` for a child is
+   passive — **any** packet from the child updates it. After
+   `NODE_OFFLINE_TIMEOUT_MS` of silence the parent does **not** immediately
+   declare the child missing: it sends up to `PROBE_MAX_TRIES` liveness
+   probes (`MSG_CMD` with `data=ping`, answered by the child's `CMD_ACK`)
+   spaced `PROBE_INTERVAL_MS` apart. Only a node silent through all probes
+   is evicted and reported with a **`node_lost`** alert (see §7) — a lossy
+   one-directional link can no longer produce a false missing report.
 5. A relay never advertises itself as a parent while its own crash report is
    still un-ACKed (`is_crash_pending()` gate), so the report gets priority.
 

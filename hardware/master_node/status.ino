@@ -14,32 +14,52 @@ void beaconTask(void *pv) {
     }
 }
 
-// Mark timed-out nodes offline and publish status. Nodes stay in the
-// registry (topology/history survive an outage; re-registration reuses them).
+// Node health: passive last-seen from any packet; on timeout, PROBE the node
+// (ping command) before declaring it missing — a lossy link must not produce
+// a false node_lost while the node is alive (PROTOCOL §5).
 void healthTask(void *pv) {
-    char ids[8][NODE_ID_MAX_LEN];
+    char dead[8][NODE_ID_MAX_LEN];
+    char ping[8][NODE_ID_MAX_LEN];
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(STATUS_PRINT_INTERVAL_MS));
         uint32_t now = millis();
-        uint8_t cnt = 0;
+        uint8_t n_dead = 0, n_ping = 0;
+
         xSemaphoreTake(registry_mutex, portMAX_DELAY);
         for (uint8_t i = 0; i < node_count; i++) {
             registered_node &n = node_registry[i];
-            if (n.is_online && n.last_seen_ms > 0 &&
-                (now - n.last_seen_ms > NODE_OFFLINE_TIMEOUT_MS)) {
-                n.is_online = false;
-                Serial.printf("[HEALTH] %s timed out\n", n.node_id);
-                if (cnt < 8) {
-                    strlcpy(ids[cnt], n.node_id, NODE_ID_MAX_LEN);
-                    cnt++;
+            if (!n.is_online) continue;
+
+            if (n.probe_sent_ms) {
+                // probe in flight
+                if (now - n.probe_sent_ms >= PROBE_INTERVAL_MS) {
+                    if (n.probe_tries >= PROBE_MAX_TRIES) {
+                        n.is_online = false;
+                        n.probe_sent_ms = 0;
+                        Serial.printf("[HEALTH] %s silent through %u probes — missing\n",
+                                      n.node_id, n.probe_tries);
+                        if (n_dead < 8) { strlcpy(dead[n_dead], n.node_id, NODE_ID_MAX_LEN); n_dead++; }
+                    } else {
+                        n.probe_tries++;
+                        n.probe_sent_ms = now;
+                        if (n_ping < 8) { strlcpy(ping[n_ping], n.node_id, NODE_ID_MAX_LEN); n_ping++; }
+                    }
                 }
+            } else if (n.last_seen_ms > 0 &&
+                       (now - n.last_seen_ms > NODE_OFFLINE_TIMEOUT_MS)) {
+                // passive timeout — start probing instead of declaring missing
+                n.probe_sent_ms = now;
+                n.probe_tries   = 1;
+                if (n_ping < 8) { strlcpy(ping[n_ping], n.node_id, NODE_ID_MAX_LEN); n_ping++; }
             }
         }
         xSemaphoreGive(registry_mutex);
-        for (uint8_t i = 0; i < cnt; i++) {
-            publish_node_status(ids[i], false);
+
+        for (uint8_t i = 0; i < n_dead; i++) {
+            publish_node_status(dead[i], false);
             publishTopology();
         }
+        for (uint8_t i = 0; i < n_ping; i++) send_cmd_ping(ping[i]);
     }
 }
 

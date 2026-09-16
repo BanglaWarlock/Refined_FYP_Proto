@@ -24,6 +24,29 @@ registered_node *find_node(const char *id) {
     return nullptr;
 }
 
+// Any packet from a node proves it alive — clear any in-flight liveness probe
+static void mark_alive(registered_node *n) {
+    n->last_seen_ms  = millis();
+    n->probe_sent_ms = 0;
+    n->probe_tries   = 0;
+}
+
+// Liveness probe for a timed-out child: reuse the command path — the target
+// ACKs MSG_CMD (data=ping), and CMD_ACK clears the probe (PROTOCOL §5).
+void send_cmd_ping(const char *target) {
+    xSemaphoreTake(registry_mutex, portMAX_DELAY);
+    registered_node *rn = find_node(target);
+    char next_hop[NODE_ID_MAX_LEN] = "";
+    if (rn) strlcpy(next_hop, rn->depth == 1 ? rn->node_id : rn->parent_id, NODE_ID_MAX_LEN);
+    xSemaphoreGive(registry_mutex);
+    if (!next_hop[0]) return;
+    char pload[PACKET_MAX_LEN], raw[PACKET_MAX_LEN];
+    snprintf(pload, sizeof(pload), "target=%s,data=ping", target);
+    format_packet(raw, sizeof(raw), new_msg_id(), own_node_id, next_hop, MSG_CMD, pload);
+    enqueueLora(String(raw));
+    Serial.printf("[PROBE] ping → %s via %s\n", target, next_hop);
+}
+
 static registered_node *get_or_create(const char *id) {
     registered_node *n = find_node(id);
     if (n) return n;
@@ -84,6 +107,7 @@ void handle_reg_req(const lora_packet *pkt) {
     if (n) {
         strlcpy(n->parent_id, own_node_id, NODE_ID_MAX_LEN);
         n->depth = 1; n->is_online = false;
+        n->probe_sent_ms = 0; n->probe_tries = 0;   // fresh registration — cancel probes
     }
     xSemaphoreGive(registry_mutex);
 
@@ -108,7 +132,7 @@ void handle_announce(const lora_packet *pkt) {
     registered_node *n = get_or_create(pkt->src_id);
     if (n) {
         came_online = !n->is_online;
-        n->last_seen_ms     = millis();
+        mark_alive(n);
         n->last_announce_ms = millis();
         n->is_online = true;
         n->snr = pkt->snr; n->rssi = pkt->rssi;
@@ -153,7 +177,8 @@ void handle_hb_sensor(const lora_packet *pkt) {
     registered_node *n = get_or_create(pkt->src_id);
     if (n) {
         came_online = !n->is_online;
-        n->last_seen_ms = millis(); n->is_online = true;
+        mark_alive(n);
+        n->is_online = true;
         char buf[32];
         if (get_field(pkt->payload, "lsnr",  buf, sizeof(buf))) n->snr  = atof(buf);
         if (get_field(pkt->payload, "lrssi", buf, sizeof(buf))) n->rssi = atoi(buf);
@@ -216,10 +241,10 @@ void handle_alert(const lora_packet *pkt) {
     bool origin_gps_fix = false;
     xSemaphoreTake(registry_mutex, portMAX_DELAY);
     registered_node *relay = find_node(pkt->src_id);
-    if (relay) { relay->last_seen_ms = millis(); relay->is_online = true; }
+    if (relay) mark_alive(relay);
     registered_node *orig = find_node(origin);
     if (orig) {
-        orig->last_seen_ms = millis(); orig->is_online = true;
+        mark_alive(orig);
         origin_gps_fix = orig->gps_fix;
         if (aseq) {
             if (orig->last_alert_seq && aseq <= orig->last_alert_seq) stale = true;
@@ -303,6 +328,12 @@ void handle_alert(const lora_packet *pkt) {
 }
 
 void handle_cmd_ack(const lora_packet *pkt) {
+    // a CMD_ACK (including our liveness pings) proves the node alive
+    xSemaphoreTake(registry_mutex, portMAX_DELAY);
+    registered_node *n = find_node(pkt->src_id);
+    if (n) mark_alive(n);
+    xSemaphoreGive(registry_mutex);
+
     xSemaphoreTake(pending_cmd_mutex, portMAX_DELAY);
     for (int i = (int)pending_cmds.size() - 1; i >= 0; i--) {
         if (strcmp(pending_cmds[i].target, pkt->src_id) == 0) {
