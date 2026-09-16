@@ -2,7 +2,7 @@
 // no parent-liveness state machine: register once, then alerts retry until
 // the master ACKs them and heartbeats fire on a timer. If the link dies for
 // long enough (every alert un-ACKed past LINK_LOST_MS), the node simply
-// re-registers — that IS the recovery. Radio layer (CAD, dual-path RX,
+// re-registers — that IS the recovery. Radio layer (dual-path parsing,
 // frame harvest) is shared with the mesh build.
 
 #include <SPI.h>
@@ -70,9 +70,6 @@ typedef struct {
 #define DISC_RETRY_MS           5000   // between discovery cycles
 #define REG_TIMEOUT_MS          6000
 #define POST_TX_LISTEN_MS        100
-#define CAD_TIMEOUT_MS           100
-#define CAD_BACKOFF_MS            40
-#define CAD_MAX_TRIES              5
 #define STATUS_INTERVAL_MS      10000
 #define FLOAT_DEBOUNCE_MS         50
 #define GPS_FIX_TIMEOUT_MS      45000

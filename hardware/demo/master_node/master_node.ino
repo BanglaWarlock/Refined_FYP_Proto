@@ -49,9 +49,6 @@ typedef struct {
 
 // ── Timing (demo)
 #define POST_TX_LISTEN_MS        100
-#define CAD_TIMEOUT_MS           100
-#define CAD_BACKOFF_MS            40
-#define CAD_MAX_TRIES              5
 #define STATUS_INTERVAL_MS     10000
 
 #define LED_LORA_FAIL 5
