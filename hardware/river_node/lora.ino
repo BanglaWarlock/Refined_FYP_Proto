@@ -1,19 +1,11 @@
 // Radio layer: frame codec, CAD-before-TX half-duplex discipline, RX/TX/proc
 // tasks, reliable alert queue with seq freshness. Spec: docs/PROTOCOL.md §2-§7.
 
-// ── ISRs (DIO0) — dispatched by IRQ flags inside the library.
-// Runs inside the library's SPI spinlock critical section: set flags only,
-// never call FreeRTOS services here. The RX/CAD tasks poll these.
-volatile int      lora_rx_size  = 0;   // byte count of the freshest RxDone packet
-volatile bool     lora_rx_ready = false;
-volatile uint32_t lora_rx_seq   = 0;   // bumped per RxDone — mid-read abort marker
-
-void IRAM_ATTR onLoRaReceive(int packetSize) {
-    if (packetSize <= 0 || packetSize > PACKET_MAX_LEN - 1) return;   // sane packets only
-    lora_rx_size  = packetSize;
-    lora_rx_ready = true;
-    lora_rx_seq++;
-}
+// ── CAD ISR (DIO0, dispatched by IRQ flags inside the library).
+// Runs inside the library's SPI spinlock critical section: set flags only.
+// NOTE: RX no longer uses DIO0 at all — loraRxTask polls parsePacket(), so a
+// dead/miswired DIO0 degrades only CAD (which fails open), not reception.
+volatile bool cad_in_progress = false;  // RX task must not parsePacket mid-CAD
 
 void IRAM_ATTR onLoraCadDone(bool activity) {
     cad_activity  = activity;
@@ -189,17 +181,18 @@ void setupLoRa() {
     LoRa.setCodingRate4(LORA_CR);
     LoRa.setTxPower(LORA_TX_PWR);
     LoRa.enableCrc();
-    LoRa.onReceive(onLoRaReceive);
-    LoRa.onCadDone(onLoraCadDone);
+    LoRa.onCadDone(onLoraCadDone);   // CAD only — RX is polled, DIO0-free
     LoRa.receive();
     Serial.println("[LORA] OK");
 }
 
 // One CAD scan. Leaves the radio back in RX. Fails open on CAD timeout —
 // availability beats politeness; ACK/retry recovers any resulting loss.
+// Called with lora_mutex held; cad_in_progress keeps the RX poller out.
 static bool channel_idle(TickType_t timeout) {
-    cad_activity  = false;
-    cad_done_flag = false;
+    cad_activity    = false;
+    cad_done_flag   = false;
+    cad_in_progress = true;
     LoRa.channelActivityDetection();
     TickType_t waited = 0;
     while (!cad_done_flag && waited < timeout) {
@@ -207,6 +200,7 @@ static bool channel_idle(TickType_t timeout) {
         waited += 2;
     }
     LoRa.receive();                    // CAD leaves the chip in standby
+    cad_in_progress = false;
     if (!cad_done_flag) return true;   // fail open
     return !cad_activity;
 }
@@ -228,29 +222,30 @@ static void lora_send_locked(const char *raw) {
     LoRa.receive();
 }
 
-// ── loraRxTask (core 1, pri 5) — polls the ISR flag.
-// Reads EXACTLY the byte count reported at RxDone — the library's available()
-// goes stale across TX/CAD mode churn. If a new packet lands mid-read
-// (lora_rx_seq bumped), the partial packet is dropped rather than mixed.
+// ── loraRxTask (core 1, pri 5) — polls the IRQ flags via parsePacket().
+// No DIO0 dependency: reception works even if the DIO0 wire/interrupt is
+// dead (only CAD then degrades, and it fails open). parsePacket returns the
+// packet length on RxDone, sets the FIFO pointer, and re-arms RX otherwise.
 void loraRxTask(void *pv) {
     char raw[PACKET_MAX_LEN];
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(3));
-        if (!lora_rx_ready) continue;
+        if (cad_in_progress) continue;            // CAD owns the radio
         xSemaphoreTake(lora_mutex, portMAX_DELAY);
-        lora_rx_ready = false;
-        int      sz   = lora_rx_size;
-        uint32_t seq0 = lora_rx_seq;
+        int sz = LoRa.parsePacket();
+        if (sz <= 0 || sz >= PACKET_MAX_LEN) {    // nothing / oversized
+            xSemaphoreGive(lora_mutex);
+            continue;
+        }
         int n = 0;
-        while (n < sz && n < PACKET_MAX_LEN - 1) {
-            if (lora_rx_seq != seq0) { n = 0; break; }   // new packet mid-read
-            int b = LoRa.read();                          // gated by chip RX count
-            if (b < 0) break;                             // FIFO exhausted — drop
+        while (n < sz) {
+            int b = LoRa.read();
+            if (b < 0) break;                     // FIFO exhausted — drop
             raw[n++] = (char)b;
         }
         float snr = LoRa.packetSnr(); int rssi = LoRa.packetRssi();
         xSemaphoreGive(lora_mutex);
-        if (n == 0) continue;
+        if (n != sz) continue;                    // short read — drop
         raw[n] = '\0';
         Serial.printf("[LORA RX] rssi=%d snr=%.1f  %s\n", rssi, snr, raw);
         lora_packet pkt;

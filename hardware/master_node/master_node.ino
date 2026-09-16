@@ -56,7 +56,6 @@ SemaphoreHandle_t          pending_cmd_mutex;
 // ── LoRa queues
 SemaphoreHandle_t         lora_mutex;
 SemaphoreHandle_t         lora_rx_mutex;
-SemaphoreHandle_t         lora_rx_sem;
 SemaphoreHandle_t         lora_proc_sem;
 std::vector<lora_packet>  lora_rx_list;
 SemaphoreHandle_t         lora_tx_mutex;
@@ -116,7 +115,6 @@ void setup() {
     pending_cmd_mutex = xSemaphoreCreateMutex();
     lora_mutex     = xSemaphoreCreateMutex();
     lora_rx_mutex  = xSemaphoreCreateMutex();
-    lora_rx_sem    = xSemaphoreCreateCounting(50, 0);
     lora_proc_sem  = xSemaphoreCreateCounting(50, 0);
     lora_tx_mutex  = xSemaphoreCreateMutex();
     lora_tx_sem    = xSemaphoreCreateCounting(50, 0);

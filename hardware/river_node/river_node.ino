@@ -100,7 +100,6 @@ uint8_t  dedup_idx             = 0;
 
 // ── FreeRTOS: LoRa
 SemaphoreHandle_t         lora_mutex;
-SemaphoreHandle_t         lora_rx_sem;
 SemaphoreHandle_t         lora_rx_mutex;
 SemaphoreHandle_t         lora_proc_sem;
 std::vector<lora_packet>  lora_rx_list;
@@ -161,7 +160,6 @@ void setup() {
     pinMode(LED_PIN, OUTPUT); digitalWrite(LED_PIN, LOW);
 
     lora_mutex       = xSemaphoreCreateMutex();
-    lora_rx_sem      = xSemaphoreCreateBinary();
     lora_rx_mutex    = xSemaphoreCreateMutex();
     lora_proc_sem    = xSemaphoreCreateCounting(50, 0);
     lora_tx_mutex    = xSemaphoreCreateMutex();
