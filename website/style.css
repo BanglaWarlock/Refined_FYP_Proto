@@ -111,6 +111,7 @@ body.dark .pill.L3 { background: rgba(245,93,93,.2); }
 .master-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line); }
 
 #feed { display: flex; flex-direction: column; gap: 8px; max-height: 65vh; overflow-y: auto; }
+.arch-img { max-width: 100%; height: auto; border-radius: 8px; display: block; margin: 0 auto; background: #fff; }
 .evt { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--dim); border-radius: 8px; padding: 10px 14px; box-shadow: var(--shadow); }
 .evt .t { color: var(--dim); font-size: 12px; }
 .evt.flood_level { border-left-color: var(--bad); }
