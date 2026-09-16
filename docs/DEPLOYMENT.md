@@ -46,14 +46,28 @@ e.g. `floodwatch/suts-demo/SUTS/sensor/SUTS-001`.
 
 ## 4. CI/CD (wired up with iot-service)
 
-GitHub Actions deploys on push to `main`:
+GitHub Actions deploys on push to `main`. Create the repo on GitHub, then:
 
-- Repo secrets: `SSH_HOST` (droplet IP), `SSH_USER` (`root`), `SSH_KEY`
-  (private key), plus env secrets (`MONGO_URI`, `MQTT_BROKER`, `REDIS_URL`…).
-- Workflow builds the parser/API images, SSHes to the droplet, and restarts
-  the compose stack in `/opt/floodwatch`.
+```bash
+git remote add origin git@github.com:<username>/<repo>.git
+git push -u origin main
+```
 
-Detailed steps come with the `iot-service` workflows in this repo.
+### Repository secrets (Settings → Secrets and variables → Actions)
+
+| Secret | Value | Source |
+|--------|-------|--------|
+| `SSH_HOST` | droplet public IP | DO dashboard |
+| `SSH_USER` | `root` | DO default |
+| `SSH_KEY` | CI-only private key | `ssh-keygen -t ed25519 -C github-actions -f ~/.ssh/floodwatch_deploy -N ""` then `ssh-copy-id -i ~/.ssh/floodwatch_deploy.pub root@<IP>`; paste the full private file (incl. BEGIN/END lines) |
+| `MONGO_URI` | Atlas **driver** URI | Atlas → Connect → Drivers. Append the DB name: `mongodb+srv://<user>:<pass>@<cluster-host>/flood_monitor/?retryWrites=true&w=majority`. The `atlas-sql-...query.mongodb.net` string is the SQL/BI interface — NOT for pymongo. Rotate demo passwords before any public exposure. |
+| `MQTT_BROKER` | `broker.emqx.io` (demo) | later: droplet Mosquitto |
+| `REDIS_URL` | `redis://redis:6379` | set inside compose on the droplet |
+
+### Deploy flow
+
+Workflow builds the parser/API images, SSHes to the droplet, and restarts the
+compose stack in `/opt/floodwatch`.
 
 ## 5. Cost note
 
