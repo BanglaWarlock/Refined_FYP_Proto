@@ -4,15 +4,22 @@
 #
 #  Paste into the "User data" field when creating a DigitalOcean
 #  Droplet (or AWS EC2 Launch Template). Runs ONCE on first boot.
-#  Idempotent. After this, the instance is Docker-ready and
-#  GitHub Actions can SSH in to start the actual containers.
+#  Idempotent — safe to re-run:
+#      bash /var/lib/cloud/instance/scripts/*
+#  After this, the instance is Docker-ready and GitHub Actions
+#  can SSH in to start the actual containers.
+#
+#  NOTE: DPkg::Lock::Timeout waits out unattended-upgrades, which
+#  holds the apt lock during first boot and otherwise kills this
+#  script under `set -e`.
 # =============================================================
 set -euo pipefail
+APT_LOCK="-o DPkg::Lock::Timeout=600"
 
 # ── Docker ────────────────────────────────────────────────────
 if ! command -v docker &>/dev/null; then
-    apt-get update -qq
-    apt-get install -y -qq ca-certificates curl gnupg
+    apt-get $APT_LOCK update -qq
+    apt-get $APT_LOCK install -y -qq ca-certificates curl gnupg
 
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
@@ -25,8 +32,8 @@ if ! command -v docker &>/dev/null; then
       $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
       | tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-    apt-get update -qq
-    apt-get install -y -qq docker-ce docker-ce-cli containerd.io \
+    apt-get $APT_LOCK update -qq
+    apt-get $APT_LOCK install -y -qq docker-ce docker-ce-cli containerd.io \
         docker-buildx-plugin docker-compose-plugin
 fi
 
