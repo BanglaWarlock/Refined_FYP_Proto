@@ -38,6 +38,7 @@ typedef struct {
     uint32_t last_seen_ms;
     uint32_t last_announce_ms;
     uint32_t last_alert_seq;    // newest alert seq accepted — older = stale
+    uint8_t  depth;
     float    battery_voltage;
     uint8_t  float_bits;
     float    snr;               // leaf→master link quality

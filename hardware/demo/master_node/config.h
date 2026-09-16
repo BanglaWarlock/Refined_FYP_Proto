@@ -10,8 +10,8 @@
                                       // keep unique on public brokers; "" = no prefix level
 
 // WiFi backhaul
-#define WIFI_SSID      "YOUR_WIFI_SSID"
-#define WIFI_PASS      "YOUR_WIFI_PASS"
+#define WIFI_SSID      "aqib_2.4GHz@unifi"
+#define WIFI_PASS      "aqibmn7084"
 
 // MQTT broker (public EMQX for the demo; your droplet Mosquitto later)
 #define MQTT_HOST      "broker.emqx.io"
@@ -19,7 +19,7 @@
 
 // Radio — must match the river nodes
 #define LORA_SF        7
-#define LORA_TX_PWR    17
+#define LORA_TX_PWR    20
 
 // Pin wiring
 #define PIN_LORA_SS     5
