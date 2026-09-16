@@ -1,22 +1,23 @@
 // Radio layer: frame codec, CAD-before-TX half-duplex discipline, RX/TX/proc
 // tasks. Same discipline as the river nodes (docs/PROTOCOL.md §2-§3).
 
-// ── ISRs (DIO0) — dispatched by IRQ flags inside the library
-volatile int lora_rx_size = 0;   // byte count of the freshest RxDone packet
+// ── ISRs (DIO0) — dispatched by IRQ flags inside the library.
+// Runs inside the library's SPI spinlock critical section: set flags only,
+// never call FreeRTOS services here. The RX/CAD tasks poll these.
+volatile int      lora_rx_size  = 0;   // byte count of the freshest RxDone packet
+volatile bool     lora_rx_ready = false;
+volatile uint32_t lora_rx_seq   = 0;   // bumped per RxDone — mid-read abort marker
 
 void IRAM_ATTR onLoRaReceive(int packetSize) {
     if (packetSize <= 0 || packetSize > PACKET_MAX_LEN - 1) return;   // sane packets only
-    lora_rx_size = packetSize;
-    BaseType_t woken = pdFALSE;
-    xSemaphoreGiveFromISR(lora_rx_sem, &woken);
-    if (woken) portYIELD_FROM_ISR();
+    lora_rx_size  = packetSize;
+    lora_rx_ready = true;
+    lora_rx_seq++;
 }
 
 void IRAM_ATTR onLoraCadDone(bool activity) {
-    cad_activity = activity;
-    BaseType_t woken = pdFALSE;
-    xSemaphoreGiveFromISR(cad_done_sem, &woken);
-    if (woken) portYIELD_FROM_ISR();
+    cad_activity  = activity;
+    cad_done_flag = true;
 }
 
 uint64_t new_msg_id() { return (uint64_t)esp_random() << 32 | esp_random(); }
@@ -124,14 +125,16 @@ void setupLoRa() {
 
 // One CAD scan; leaves the radio back in RX. Fails open on timeout.
 static bool channel_idle(TickType_t timeout) {
-    cad_activity = false;
-    xSemaphoreTake(cad_done_sem, 0);   // drain stale token
+    cad_activity  = false;
+    cad_done_flag = false;
     LoRa.channelActivityDetection();
-    if (xSemaphoreTake(cad_done_sem, timeout) != pdTRUE) {
-        LoRa.receive();
-        return true;
+    TickType_t waited = 0;
+    while (!cad_done_flag && waited < timeout) {
+        vTaskDelay(pdMS_TO_TICKS(2));
+        waited += 2;
     }
     LoRa.receive();                    // CAD leaves the chip in standby
+    if (!cad_done_flag) return true;   // fail open
     return !cad_activity;
 }
 
@@ -152,21 +155,24 @@ static void lora_send_locked(const char *raw) {
     LoRa.receive();
 }
 
-// ── loraRxTask (core 1, pri 3) — ISR driven.
+// ── loraRxTask (core 1, pri 3) — polls the ISR flag.
 // Reads EXACTLY the byte count reported at RxDone — the library's available()
-// goes stale across TX/CAD mode churn and once read FIFO residue past the
-// packet boundary (observed as concatenated ghost packets).
+// goes stale across TX/CAD mode churn. If a new packet lands mid-read
+// (lora_rx_seq bumped), the partial packet is dropped rather than mixed.
 void loraRxTask(void *pv) {
     char raw[PACKET_MAX_LEN];
     for (;;) {
-        xSemaphoreTake(lora_rx_sem, portMAX_DELAY);
+        vTaskDelay(pdMS_TO_TICKS(3));
+        if (!lora_rx_ready) continue;
         xSemaphoreTake(lora_mutex, portMAX_DELAY);
-        int sz = lora_rx_size;
-        lora_rx_size = 0;
+        lora_rx_ready = false;
+        int      sz   = lora_rx_size;
+        uint32_t seq0 = lora_rx_seq;
         int n = 0;
-        while (sz > 0 && n < sz && n < PACKET_MAX_LEN - 1) {
-            int b = LoRa.read();          // gated by the chip's RX byte count
-            if (b < 0) break;             // FIFO exhausted — stale size, drop
+        while (n < sz && n < PACKET_MAX_LEN - 1) {
+            if (lora_rx_seq != seq0) { n = 0; break; }   // new packet mid-read
+            int b = LoRa.read();                          // gated by chip RX count
+            if (b < 0) break;                             // FIFO exhausted — drop
             raw[n++] = (char)b;
         }
         float snr = LoRa.packetSnr(); int rssi = LoRa.packetRssi();

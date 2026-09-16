@@ -116,8 +116,8 @@ std::vector<pending_alert_t> alert_list;
 
 // ── Other handles
 SemaphoreHandle_t float_change_sem;
-SemaphoreHandle_t cad_done_sem;          // CAD scan finished (from ISR)
-volatile bool     cad_activity = false;  // true = preamble detected
+volatile bool     cad_done_flag = false;  // set by CAD ISR (LoRa lib spinlock)
+volatile bool     cad_activity  = false;  // true = preamble detected
 TaskHandle_t      h_led = nullptr;
 
 // ── Task handles (watermark monitoring)
@@ -171,7 +171,6 @@ void setup() {
     reg_ack_sem      = xSemaphoreCreateBinary();
     children_mutex   = xSemaphoreCreateMutex();
     float_change_sem = xSemaphoreCreateCounting(10, 0);
-    cad_done_sem     = xSemaphoreCreateBinary();
 
     xTaskCreatePinnedToCore(loraRxTask,    "lora_rx",   6144, nullptr, 5, &h_lora_rx,   1);
     xTaskCreatePinnedToCore(loraTxTask,    "lora_tx",   4096, nullptr, 5, &h_lora_tx,   1);

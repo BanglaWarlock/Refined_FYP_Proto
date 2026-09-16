@@ -64,8 +64,8 @@ SemaphoreHandle_t         lora_tx_sem;
 std::vector<String>       lora_tx_list;
 
 // ── CAD
-SemaphoreHandle_t cad_done_sem;
-volatile bool     cad_activity = false;
+volatile bool cad_done_flag = false;   // set by CAD ISR (LoRa lib spinlock)
+volatile bool cad_activity  = false;   // true = preamble detected
 
 // ── MQTT queues
 SemaphoreHandle_t       mqtt_mutex;
@@ -125,7 +125,6 @@ void setup() {
     cmd_sem        = xSemaphoreCreateCounting(50, 0);
     send_mutex     = xSemaphoreCreateMutex();
     send_sem       = xSemaphoreCreateCounting(50, 0);
-    cad_done_sem   = xSemaphoreCreateBinary();
 
     xTaskCreatePinnedToCore(loraRxTask,     "lora_rx",     4096, nullptr, 3, &h_lora_rx,     1);
     xTaskCreatePinnedToCore(loraTxTask,     "lora_tx",     4096, nullptr, 3, &h_lora_tx,     1);
