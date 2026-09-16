@@ -37,7 +37,7 @@ jobs:
           rsync -az --delete \
             iot-service/parser iot-service/api \
             iot-service/docker-compose.yml iot-service/mosquitto \
-            iot-service/nginx website \
+            iot-service/caddy website \
             ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/opt/floodwatch/
 
       - name: Write env file
@@ -47,6 +47,7 @@ jobs:
           MONGO_URI=${{ secrets.MONGO_URI }}
           MQTT_BROKER=${{ secrets.MQTT_BROKER }}
           MQTT_DEPLOY=${{ secrets.MQTT_DEPLOY }}
+          DOMAIN=${{ secrets.DOMAIN || ':80' }}
           REDIS_URL=redis://redis:6379
           EOF"
 

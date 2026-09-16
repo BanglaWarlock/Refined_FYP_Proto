@@ -1,0 +1,14 @@
+# Caddy serves the showcase site and proxies /api to FastAPI.
+# DOMAIN=:80           -> plain HTTP (no domain yet, bare IP)
+# DOMAIN=example.com   -> automatic Let's Encrypt HTTPS + 80->443 redirect
+{$DOMAIN} {
+	root * /srv
+	encode gzip
+
+	file_server
+
+	reverse_proxy /api/* api:8000 {
+		# SSE needs unbuffered streaming
+		flush_interval -1
+	}
+}

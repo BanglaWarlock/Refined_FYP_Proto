@@ -17,20 +17,37 @@
       <p class="sub">LoRa mesh · early flood monitoring · FYP showcase</p>
     </div>
   </div>
-  <div class="conn" id="conn-badge"><span class="dot"></span><span id="conn-text">connecting…</span></div>
+  <div class="hdr-right">
+    <button id="theme-btn" title="Toggle theme">🌙</button>
+    <div class="conn" id="conn-badge"><span class="dot"></span><span id="conn-text">connecting…</span></div>
+  </div>
 </header>
 
 <nav>
-  <button class="tab active" data-tab="dashboard">Dashboard</button>
+  <button class="tab active" data-tab="map">Map</button>
+  <button class="tab" data-tab="dashboard">Dashboard</button>
   <button class="tab" data-tab="live">Live Alerts</button>
-  <button class="tab" data-tab="map">Map</button>
-  <button class="tab" data-tab="system">How It Works</button>
 </nav>
 
 <main>
 
+  <!-- ── Map (default) ─────────────────────────────────────────── -->
+  <section id="map" class="panel active">
+    <div class="map-layout">
+      <div id="map-canvas"></div>
+      <aside id="node-panel" class="hidden">
+        <div class="np-head">
+          <h2 id="np-title">node</h2>
+          <button id="np-close" title="Close">✕</button>
+        </div>
+        <div id="np-body"></div>
+      </aside>
+    </div>
+    <p class="hint center">Click a node for its live stats. Lines connect each node to its parent (the master has no GPS, so links to it are not drawn).</p>
+  </section>
+
   <!-- ── Dashboard ─────────────────────────────────────────────── -->
-  <section id="dashboard" class="panel active">
+  <section id="dashboard" class="panel">
     <div class="cards">
       <div class="card"><div class="num" id="st-nodes">–</div><div class="lbl">River nodes</div></div>
       <div class="card"><div class="num" id="st-online">–</div><div class="lbl">Online now</div></div>
@@ -60,45 +77,6 @@
     <div class="box">
       <h2>Real-time event stream <span class="hint">(SSE — fires the moment a node reports)</span></h2>
       <div id="feed"></div>
-    </div>
-  </section>
-
-  <!-- ── Map ───────────────────────────────────────────────────── -->
-  <section id="map" class="panel">
-    <div id="map-canvas"></div>
-    <p class="hint center">Markers show the last reported GPS position per node; red = flood alert active. Nodes without a fix stay hidden (gps_fix=false is never displayed).</p>
-  </section>
-
-  <!-- ── How it works ──────────────────────────────────────────── -->
-  <section id="system" class="panel">
-    <div class="box">
-      <h2>System architecture</h2>
-      <pre class="diagram">
- Float sensors (1/2/3 ft)         Village gateway          Cloud (this page's backend)
-┌────────────────────────┐  LoRa   ┌──────────────┐  MQTT   ┌──────────────────────────┐
-│ River node   ESP32+SX1278├───────►│ Master  ESP32├────────►│ Public broker (demo)     │
-│ GPS · solar · battery   │  433MHz │ WiFi backhaul│         │   ↓ parser               │
-│ self-healing LoRa mesh  │◄───────┤ CAD · seq ACK│◄────────┤ MongoDB Atlas + Redis    │
-└────────────────────────┘  cmds   └──────────────┘  cmds   │   ↓ this API             │
-                                                            │ REST + SSE → website     │
-                                                            └──────────────────────────┘</pre>
-      <ul class="points">
-        <li><b>Reliable delivery</b> — every transmission is ACKed per hop and retried with jitter until acknowledged.</li>
-        <li><b>Latest-wins freshness</b> — alerts carry a monotonic <code>seq</code>: a level-2 alert always overtakes an in-flight level-1.</li>
-        <li><b>Channel discipline</b> — LoRa is half-duplex; every transmit is preceded by a channel-activity scan (CAD) with random backoff.</li>
-        <li><b>Self-healing mesh</b> — nodes discover parents by signal quality; a lost parent is re-discovered in seconds, and offline reports are suppressed if the node already re-announced elsewhere.</li>
-        <li><b>CI/CD</b> — this page and its backend deploy automatically from GitHub to the droplet on every push.</li>
-      </ul>
-    </div>
-    <div class="box">
-      <h2>Alert levels</h2>
-      <div class="levels">
-        <div><span class="pill L0">Level 0</span> Dry</div>
-        <div><span class="pill L1">Level 1</span> 1 ft</div>
-        <div><span class="pill L2">Level 2</span> 2 ft</div>
-        <div><span class="pill L3">Level 3</span> 3 ft</div>
-      </div>
-      <p class="hint">Float sensors trigger at 1/2/3 ft. Battery-low, GPS-loss, node-movement and node-offline events also stream as alerts.</p>
     </div>
   </section>
 
