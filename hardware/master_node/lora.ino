@@ -149,10 +149,43 @@ static void lora_send_locked(const char *raw) {
     LoRa.receive();
 }
 
+// Frame harvesting: FIFO state across TX/CAD churn is not always trustworthy
+// — reads may span several historical FIFO writes with stray bytes between
+// fragments. Frames are self-describing (16-hex msg_id + '|'), so scan for
+// boundaries, extract each candidate, and let parse_packet's hard validation
+// decide. Valid ghosts of our own traffic are dropped in loraProcTask.
+static void harvest_frames(char *buf, int n, int rssi, float snr) {
+    const int MIN_FRAME = 22;                 // 16 id + 4 '|' + src + dst + type
+    int i = 0;
+    while (i + MIN_FRAME <= n) {
+        bool hex16 = isxdigit((unsigned char)buf[i]);
+        for (int k = 1; hex16 && k < 16; k++) hex16 = isxdigit((unsigned char)buf[i + k]);
+        if (!hex16 || buf[i + 16] != '|') { i++; continue; }
+        int end = n;                          // frame runs to next boundary or end
+        for (int j = i + 17; j + MIN_FRAME <= n; j++) {
+            bool h = isxdigit((unsigned char)buf[j]);
+            for (int k = 1; h && k < 16; k++) h = isxdigit((unsigned char)buf[j + k]);
+            if (h && buf[j + 16] == '|') { end = j; break; }
+        }
+        char saved = buf[end]; buf[end] = '\0';
+        lora_packet pkt;
+        if (parse_packet(buf + i, &pkt)) {
+            pkt.rssi = rssi; pkt.snr = snr;
+            xSemaphoreTake(lora_rx_mutex, portMAX_DELAY);
+            lora_rx_list.push_back(pkt);
+            xSemaphoreGive(lora_rx_mutex);
+            xSemaphoreGive(lora_proc_sem);
+            Serial.printf("[FRAME] type=%u src=%s dst=%s\n", pkt.type, pkt.src_id, pkt.dst_id);
+        }
+        buf[end] = saved;
+        i = end;
+    }
+}
+
 // ── loraRxTask (core 1, pri 3) — polls the IRQ flags via parsePacket().
 // No DIO0 dependency: reception works even if the DIO0 wire/interrupt is
-// dead (only CAD then degrades, and it fails open). parsePacket returns the
-// packet length on RxDone, sets the FIFO pointer, and re-arms RX otherwise.
+// dead (only CAD then degrades, and it fails open). Whatever byte count the
+// chip reports, harvest_frames() recovers every complete frame in it.
 void loraRxTask(void *pv) {
     char raw[PACKET_MAX_LEN];
     for (;;) {
@@ -160,28 +193,23 @@ void loraRxTask(void *pv) {
         if (cad_in_progress) continue;            // CAD owns the radio
         xSemaphoreTake(lora_mutex, portMAX_DELAY);
         int sz = LoRa.parsePacket();
-        if (sz <= 0 || sz >= PACKET_MAX_LEN) {    // nothing / oversized
+        if (sz <= 0) {                            // nothing received
             xSemaphoreGive(lora_mutex);
             continue;
         }
+        if (sz >= PACKET_MAX_LEN) sz = PACKET_MAX_LEN - 1;
         int n = 0;
         while (n < sz) {
             int b = LoRa.read();
-            if (b < 0) break;                     // FIFO exhausted — drop
+            if (b < 0) break;                     // FIFO exhausted
             raw[n++] = (char)b;
         }
         float snr = LoRa.packetSnr(); int rssi = LoRa.packetRssi();
         xSemaphoreGive(lora_mutex);
-        if (n != sz) continue;                    // short read — drop
+        if (n < 22) continue;
         raw[n] = '\0';
         Serial.printf("[LORA RX] rssi=%d snr=%.1f  %s\n", rssi, snr, raw);
-        lora_packet pkt;
-        if (!parse_packet(raw, &pkt)) continue;
-        pkt.rssi = rssi; pkt.snr = snr;
-        xSemaphoreTake(lora_rx_mutex, portMAX_DELAY);
-        lora_rx_list.push_back(pkt);
-        xSemaphoreGive(lora_rx_mutex);
-        xSemaphoreGive(lora_proc_sem);
+        harvest_frames(raw, n, rssi, snr);
     }
 }
 
@@ -198,6 +226,10 @@ void loraProcTask(void *pv) {
         bool for_us = (strcmp(pkt.dst_id, own_node_id) == 0 || strcmp(pkt.dst_id, "ALL") == 0);
         if (!for_us || is_duplicate(pkt.msg_id)) continue;
         add_to_dedup(pkt.msg_id);
+
+        // a master can never legitimately hear itself — ghosts of our own TX
+        // that survive FIFO harvest are dropped here
+        if (strcmp(pkt.src_id, own_node_id) == 0) continue;
 
         Serial.printf("[PROC] type=%u src=%s dst=%s\n", pkt.type, pkt.src_id, pkt.dst_id);
         switch (pkt.type) {

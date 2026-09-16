@@ -8,6 +8,7 @@ void handle_disc_resp(const lora_packet *pkt) {
     if ((p = strstr(pkt->payload, "depth=")) != nullptr) c.depth = (uint8_t)atoi(p + 6);
     if ((p = strstr(pkt->payload, "cur="))   != nullptr) c.cur_children = (uint8_t)atoi(p + 4);
     if ((p = strstr(pkt->payload, "max="))   != nullptr) c.max_children = (uint8_t)atoi(p + 4);
+    else c.max_children = 255;   // truncated harvest payload — assume capacity
     if (c.cur_children >= c.max_children) { Serial.printf("[DISC] %s full — skipped\n", c.id); return; }
     xSemaphoreTake(candidates_mutex, portMAX_DELAY);
     if (candidate_count < 8) candidates[candidate_count++] = c;
