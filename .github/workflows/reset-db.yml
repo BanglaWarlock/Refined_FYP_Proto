@@ -1,0 +1,22 @@
+name: Reset database
+
+# MANUAL ONLY — clears the FloodWatch collections on Atlas. Never runs on
+# push. Requires the same SSH_* and MONGO_URI secrets as the deploy workflow.
+
+on: workflow_dispatch
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          install -m 600 /dev/null ~/.ssh/id_ed25519
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Drop FloodWatch collections
+        run: |
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+            "cd /opt/floodwatch && docker compose run --rm api python reset_db.py"
