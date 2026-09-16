@@ -1,11 +1,21 @@
 // Radio layer: frame codec, CAD-before-TX half-duplex discipline, RX/TX/proc
 // tasks. Same discipline as the river nodes (docs/PROTOCOL.md §2-§3).
 
-// ── CAD ISR (DIO0, dispatched by IRQ flags inside the library).
-// Runs inside the library's SPI spinlock critical section: set flags only.
-// NOTE: RX no longer uses DIO0 at all — loraRxTask polls parsePacket(), so a
-// dead/miswired DIO0 degrades only CAD (which fails open), not reception.
-volatile bool cad_in_progress = false;  // RX task must not parsePacket mid-CAD
+// ── DIO0 ISRs (dispatched by IRQ flags inside the library).
+// RX has two complementary paths: if DIO0 works, the ISR flags the packet
+// (µs latency); if DIO0 is dead/miswired, the RX task's parsePacket() poll
+// catches the same IRQ flag over SPI instead. Only one path services a given
+// packet (the ISR clears the flag first when it fires); duplicates fall to
+// msg_id dedup. Callbacks run inside the library's SPI spinlock — flags only.
+volatile int      lora_rx_size    = 0;
+volatile bool     lora_rx_ready   = false;
+volatile bool     cad_in_progress = false;   // RX task must not parsePacket mid-CAD
+
+void IRAM_ATTR onLoRaReceive(int packetSize) {
+    if (packetSize <= 0 || packetSize > PACKET_MAX_LEN - 1) return;
+    lora_rx_size  = packetSize;
+    lora_rx_ready = true;
+}
 
 void IRAM_ATTR onLoraCadDone(bool activity) {
     cad_activity  = activity;
@@ -109,7 +119,8 @@ void setupLoRa() {
     LoRa.setCodingRate4(LORA_CR);
     LoRa.setTxPower(LORA_TX_PWR);
     LoRa.enableCrc();
-    LoRa.onCadDone(onLoraCadDone);   // CAD only — RX is polled, DIO0-free
+    LoRa.onReceive(onLoRaReceive);   // fast path when DIO0 works
+    LoRa.onCadDone(onLoraCadDone);
     LoRa.receive();
     Serial.println("[LORA] OK");
 }
@@ -182,22 +193,30 @@ static void harvest_frames(char *buf, int n, int rssi, float snr) {
     }
 }
 
-// ── loraRxTask (core 1, pri 3) — polls the IRQ flags via parsePacket().
-// No DIO0 dependency: reception works even if the DIO0 wire/interrupt is
-// dead (only CAD then degrades, and it fails open). Whatever byte count the
-// chip reports, harvest_frames() recovers every complete frame in it.
+// ── loraRxTask (core 1, pri 3) — dual-path RX.
+// ISR path (DIO0 alive): flag + byte count delivered at RxDone.
+// Poll path (DIO0 dead): parsePacket() reads the IRQ flag over SPI.
+// Whatever the byte count, harvest_frames() recovers every complete frame.
 void loraRxTask(void *pv) {
     char raw[PACKET_MAX_LEN];
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(3));
         if (cad_in_progress) continue;            // CAD owns the radio
+        bool isr = lora_rx_ready;
+        if (isr) { lora_rx_ready = false; }
+
         xSemaphoreTake(lora_mutex, portMAX_DELAY);
-        int sz = LoRa.parsePacket();
-        if (sz <= 0) {                            // nothing received
+        int sz;
+        if (isr) {
+            sz = lora_rx_size;                    // FIFO ptr already set by ISR
+        } else {
+            sz = LoRa.parsePacket();              // IRQ-flag poll, no DIO0 needed
+            if (sz > PACKET_MAX_LEN - 1) sz = PACKET_MAX_LEN - 1;
+        }
+        if (sz <= 0) {
             xSemaphoreGive(lora_mutex);
             continue;
         }
-        if (sz >= PACKET_MAX_LEN) sz = PACKET_MAX_LEN - 1;
         int n = 0;
         while (n < sz) {
             int b = LoRa.read();
@@ -205,6 +224,7 @@ void loraRxTask(void *pv) {
             raw[n++] = (char)b;
         }
         float snr = LoRa.packetSnr(); int rssi = LoRa.packetRssi();
+        if (!isr) LoRa.receive();                 // parsePacket left RX mode — re-arm
         xSemaphoreGive(lora_mutex);
         if (n < 22) continue;
         raw[n] = '\0';
