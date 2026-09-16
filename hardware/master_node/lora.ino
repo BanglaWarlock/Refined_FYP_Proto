@@ -2,8 +2,11 @@
 // tasks. Same discipline as the river nodes (docs/PROTOCOL.md §2-§3).
 
 // ── ISRs (DIO0) — dispatched by IRQ flags inside the library
+volatile int lora_rx_size = 0;   // byte count of the freshest RxDone packet
+
 void IRAM_ATTR onLoRaReceive(int packetSize) {
-    if (packetSize == 0) return;
+    if (packetSize <= 0 || packetSize > PACKET_MAX_LEN - 1) return;   // sane packets only
+    lora_rx_size = packetSize;
     BaseType_t woken = pdFALSE;
     xSemaphoreGiveFromISR(lora_rx_sem, &woken);
     if (woken) portYIELD_FROM_ISR();
@@ -24,14 +27,34 @@ bool is_duplicate(uint64_t id) {
 }
 void add_to_dedup(uint64_t id) { dedup_buf[dedup_idx] = id; dedup_idx = (dedup_idx + 1) % DEDUP_SIZE; }
 
+// node ids: alphanumeric + - _ .
+static bool id_valid(const char *id) {
+    for (const char *p = id; *p; p++) {
+        char c = *p;
+        if (!(isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.')) return false;
+    }
+    return id[0] != '\0';
+}
+
 bool parse_packet(const char *raw, lora_packet *pkt) {
     char buf[PACKET_MAX_LEN]; strlcpy(buf, raw, sizeof(buf));
     char *sp, *tok;
-    tok = strtok_r(buf, "|", &sp); if (!tok) return false;
+    // msg_id: exactly 16 hex chars
+    tok = strtok_r(buf, "|", &sp);
+    if (!tok || strlen(tok) != 16) return false;
+    for (const char *h = tok; *h; h++) if (!isxdigit((unsigned char)*h)) return false;
     pkt->msg_id = strtoull(tok, nullptr, 16);
-    tok = strtok_r(nullptr, "|", &sp); if (!tok) return false; strlcpy(pkt->src_id, tok, NODE_ID_MAX_LEN);
-    tok = strtok_r(nullptr, "|", &sp); if (!tok) return false; strlcpy(pkt->dst_id, tok, NODE_ID_MAX_LEN);
-    tok = strtok_r(nullptr, "|", &sp); if (!tok) return false; pkt->type = (uint8_t)atoi(tok);
+    // ids: printable, bounded
+    tok = strtok_r(nullptr, "|", &sp);
+    if (!tok || strlen(tok) >= NODE_ID_MAX_LEN || !id_valid(tok)) return false;
+    strlcpy(pkt->src_id, tok, NODE_ID_MAX_LEN);
+    tok = strtok_r(nullptr, "|", &sp);
+    if (!tok || strlen(tok) >= NODE_ID_MAX_LEN ||
+        (strcmp(tok, "ALL") != 0 && !id_valid(tok))) return false;
+    strlcpy(pkt->dst_id, tok, NODE_ID_MAX_LEN);
+    tok = strtok_r(nullptr, "|", &sp);
+    if (!tok || atoi(tok) > MSG_RELAY_REQ) return false;
+    pkt->type = (uint8_t)atoi(tok);
     strlcpy(pkt->payload, sp ? sp : "", sizeof(pkt->payload));
     return true;
 }
@@ -129,18 +152,27 @@ static void lora_send_locked(const char *raw) {
     LoRa.receive();
 }
 
-// ── loraRxTask (core 1, pri 3) — ISR driven
+// ── loraRxTask (core 1, pri 3) — ISR driven.
+// Reads EXACTLY the byte count reported at RxDone — the library's available()
+// goes stale across TX/CAD mode churn and once read FIFO residue past the
+// packet boundary (observed as concatenated ghost packets).
 void loraRxTask(void *pv) {
     char raw[PACKET_MAX_LEN];
     for (;;) {
         xSemaphoreTake(lora_rx_sem, portMAX_DELAY);
         xSemaphoreTake(lora_mutex, portMAX_DELAY);
+        int sz = lora_rx_size;
+        lora_rx_size = 0;
         int n = 0;
-        while (LoRa.available() && n < PACKET_MAX_LEN - 1) raw[n++] = (char)LoRa.read();
-        raw[n] = '\0';
+        while (sz > 0 && n < sz && n < PACKET_MAX_LEN - 1) {
+            int b = LoRa.read();          // gated by the chip's RX byte count
+            if (b < 0) break;             // FIFO exhausted — stale size, drop
+            raw[n++] = (char)b;
+        }
         float snr = LoRa.packetSnr(); int rssi = LoRa.packetRssi();
         xSemaphoreGive(lora_mutex);
         if (n == 0) continue;
+        raw[n] = '\0';
         Serial.printf("[LORA RX] rssi=%d snr=%.1f  %s\n", rssi, snr, raw);
         lora_packet pkt;
         if (!parse_packet(raw, &pkt)) continue;
