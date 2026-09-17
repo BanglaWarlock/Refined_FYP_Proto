@@ -106,6 +106,12 @@ def store_failed(topic: str, payload: str, reason: str):
 # ── Handlers ────────────────────────────────────────────────────────────────
 
 def handle_heartbeat(deploy, village, node_id, payload):
+    # SSE event goes out BEFORE the DB writes — the stream must not wait on
+    # Atlas round-trips (DB state catches up moments later)
+    emit("heartbeat", {"node_id": node_id, "village": village, "deploy": deploy,
+                       "water_level": water_level_of(payload.get("float_bits", 0)),
+                       "bat": payload.get("bat"), "gps_fix": payload.get("gps_fix"),
+                       "lat": payload.get("lat"), "lng": payload.get("lng")})
     db.river_nodes.update_one(
         {"node_id": node_id},
         {"$set": {
@@ -122,10 +128,6 @@ def handle_heartbeat(deploy, village, node_id, payload):
         upsert=True,
     )
     db.heartbeats.insert_one({"ts": now(), "node_id": node_id, "village": village, **payload})
-    emit("heartbeat", {"node_id": node_id, "village": village, "deploy": deploy,
-                       "water_level": water_level_of(payload.get("float_bits", 0)),
-                       "bat": payload.get("bat"), "gps_fix": payload.get("gps_fix"),
-                       "lat": payload.get("lat"), "lng": payload.get("lng")})
 
 
 def handle_alert(deploy, village, node_id, payload):
@@ -147,29 +149,33 @@ def handle_alert(deploy, village, node_id, payload):
     last_alert_ts[key] = time.time()
 
     doc = {"ts": now(), "node_id": node_id, "village": village, "deploy": deploy, **payload}
+    if atype == "flood":
+        emit("flood_level", {k: doc.get(k) for k in
+             ("node_id", "village", "level", "float_bits", "lat", "lng")})
+    elif atype == "node_lost":
+        emit("node_lost", {"node_id": payload.get("lost"), "reported_by": node_id,
+                           "village": village})
+    else:
+        emit(atype, {k: doc.get(k) for k in
+             ("node_id", "village", "bat", "level", "dist", "lat", "lng")})
     db.alerts.insert_one(doc)
     if atype == "flood":
         db.river_nodes.update_one({"node_id": node_id},
                                   {"$set": {"water_level": payload.get("level", 0),
                                             "float_bits": payload.get("float_bits", 0),
                                             "last_seen": now()}})
-        emit("flood_level", {k: doc.get(k) for k in
-             ("node_id", "village", "level", "float_bits", "lat", "lng")})
     elif atype == "node_lost":
         # master already applied the suppression rule; trust its decision
         db.events.insert_one({"ts": now(), "type": "node_lost",
                               "node_id": payload.get("lost"), "village": village,
                               "data": payload})
-        emit("node_lost", {"node_id": payload.get("lost"), "reported_by": node_id,
-                           "village": village})
     else:
         db.events.insert_one({"ts": now(), "type": atype, "node_id": node_id,
                               "village": village, "data": payload})
-        emit(atype, {k: doc.get(k) for k in
-             ("node_id", "village", "bat", "level", "dist", "lat", "lng")})
 
 
 def handle_announce(deploy, village, node_id, payload):
+    emit("node_announce", {"node_id": node_id, "village": village, **payload})
     db.river_nodes.update_one(
         {"node_id": node_id},
         {"$set": {
@@ -183,33 +189,33 @@ def handle_announce(deploy, village, node_id, payload):
     )
     db.events.insert_one({"ts": now(), "type": "announce", "node_id": node_id,
                           "village": village, "data": payload})
-    emit("node_announce", {"node_id": node_id, "village": village, **payload})
 
 
 def handle_node_status(deploy, village, target_id, payload):
     online = bool(payload.get("online", False))
+    emit("node_online" if online else "node_offline",
+         {"node_id": target_id, "village": village, "deploy": deploy})
     db.river_nodes.update_one({"node_id": target_id},
                               {"$set": {"village": village, "deploy": deploy,
                                         "online": online, "last_status_change": now()}},
                               upsert=True)
     db.events.insert_one({"ts": now(), "type": "node_online" if online else "node_offline",
                           "node_id": target_id, "village": village})
-    emit("node_online" if online else "node_offline",
-         {"node_id": target_id, "village": village, "deploy": deploy})
 
 
 def handle_topology(deploy, village, payload):
+    emit("topology", {"village": village, "topology": payload})
     db.villages.update_one(
         {"village": village},
         {"$set": {"village": village, "deploy": deploy,
                   "topology": payload, "topology_ts": now()}},
         upsert=True,
     )
-    emit("topology", {"village": village, "topology": payload})
 
 
 def handle_master_status(deploy, village, payload):
     online = payload.get("status") == "online"
+    emit("master_online" if online else "master_offline", {"village": village, "deploy": deploy})
     db.master_nodes.update_one(
         {"village": village},
         {"$set": {"village": village, "deploy": deploy, "online": online,
@@ -222,7 +228,6 @@ def handle_master_status(deploy, village, payload):
                            upsert=True)
     db.events.insert_one({"ts": now(), "type": "master_online" if online else "master_offline",
                           "village": village})
-    emit("master_online" if online else "master_offline", {"village": village, "deploy": deploy})
 
 
 HANDLERS = {
