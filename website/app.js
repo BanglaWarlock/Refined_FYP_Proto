@@ -104,6 +104,7 @@ async function selectNode(nodeId) {
   redrawMap();
   const panel = $("#node-panel");
   panel.classList.remove("hidden");
+  if (window.innerWidth <= 900) panel.scrollIntoView({ behavior: "smooth", block: "start" });
   $("#np-title").textContent = nodeId;
   $("#np-body").innerHTML = `<span class="hint">loading…</span>`;
 
@@ -329,27 +330,28 @@ function connectSSE() {
   // for untyped events, so we must listen per type (no wildcard support).
   const handle = (e) => {
     const evt = JSON.parse(e.data);
-    addEvent(e.type || "message", evt.data ?? evt, evt._ts);
+    addEvent(e.type || "message", evt, evt._ts);   // evt directly, not evt.data
+
     switch (e.type) {
       case "snapshot":
-        nodesCache = evt.data.nodes ?? [];
+        nodesCache = evt.nodes ?? [];               // ← evt.nodes
         renderNodes();
-        refreshMasters();          // refetch instead of a cache you don't have
+        refreshMasters();
         break;
 
       case "heartbeat":
       case "flood_level":
-        if (patchNode(evt.data)) {
-          renderNodes();                       // local DOM rebuild, no network
-          if (evt.data.node_id === selectedId) updatePanelFromCache();
+        if (patchNode(evt)) {                       // ← evt
+          renderNodes();
+          if (evt.node_id === selectedId) updatePanelFromCache();
         } else {
-          refreshNodes();                      // first sight of the node
+          refreshNodes();
         }
         break;
 
       case "node_online":
       case "node_offline":
-        if (patchNode(evt.data)) renderNodes(); else refreshNodes();
+        if (patchNode(evt)) renderNodes(); else refreshNodes();
         break;
 
       case "announce":
@@ -357,7 +359,7 @@ function connectSSE() {
       case "master_online":
       case "master_offline":
       case "node_lost":
-        refreshNodes(); refreshMasters();        // rare events → refetch is fine
+        refreshNodes(); refreshMasters();
         break;
     }
   };
