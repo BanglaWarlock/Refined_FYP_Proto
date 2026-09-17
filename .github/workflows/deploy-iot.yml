@@ -9,8 +9,8 @@ on:
   push:
     branches: [main]
     paths:
-      - "iot-service/**"
-      - "website/**"
+      - "iot-service/*"
+      - "website/*"
       - ".github/workflows/deploy-iot.yml"
   workflow_dispatch:
 
