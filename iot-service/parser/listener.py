@@ -323,10 +323,11 @@ def on_message(client, userdata, msg):
             return handle_master_status(deploy, village, json.loads(raw))
         if kind == "nodes" and len(rest) >= 3 and rest[-1] == "status":
             return handle_node_status(deploy, village, rest[1], json.loads(raw))
+
         node_id = rest[-1]
         payload = json.loads(raw)
-        if node_id != payload.get("node_id"):
-            payload["node_id"] = node_id   # topic is authoritative
+        if kind != "topology" and node_id != payload.get("node_id"):
+            payload["node_id"] = node_id
         fn = HANDLERS.get(kind)
         if fn:
             return fn(deploy, village, node_id, payload)

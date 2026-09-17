@@ -272,10 +272,12 @@ async function refreshMasters() {
 }
 
 function renderTree(node, depth) {
+  if (typeof node !== "object" || node === null) return "";
   return Object.entries(node)
     .map(([id, children]) =>
       "  ".repeat(depth) + (depth ? "└─ " : "") + id +
-      (Object.keys(children).length ? "\n" + renderTree(children, depth + 1) : ""))
+      (children && typeof children === "object" && Object.keys(children).length
+        ? "\n" + renderTree(children, depth + 1) : ""))
     .join("\n");
 }
 
@@ -343,11 +345,9 @@ function connectSSE() {
       case "heartbeat":
       case "flood_level":
         if (patchNode(evt)) {
-        console.log("patchNode");   // ← evt
           renderNodes();
           if (evt.node_id === selectedId) updatePanelFromCache();
         } else {
-        console.log("refreshNodes");
           refreshNodes();
         }
         break;
