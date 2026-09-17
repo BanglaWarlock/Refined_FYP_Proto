@@ -200,8 +200,10 @@ void discoveryTask(void *pv) {
 }
 
 // Heartbeats are fire-and-forget: one every HB_INTERVAL_MS while registered.
-// The master refreshes the child's liveness from any received frame.
+// Every 30th heartbeat also re-announces (~5 min) so a rebooted master picks
+// up the child's topology/position without waiting for an alert.
 void heartbeatTask(void *pv) {
+    static uint32_t hb_count = 0;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(HB_INTERVAL_MS));
         if (node_state != NODE_OPERATIONAL || !active_parent_id[0]) continue;
@@ -215,5 +217,9 @@ void heartbeatTask(void *pv) {
 
         send_heartbeat();
         Serial.printf("[HB] Sent → %s\n", active_parent_id);
+        if (++hb_count % 30 == 0) {
+            Serial.println("[HB] Periodic re-announce");
+            send_announce();
+        }
     }
 }

@@ -28,12 +28,20 @@ void healthTask(void *pv) {
 
 void statusTask(void *pv) {
     TickType_t last = xTaskGetTickCount();
+    uint32_t last_topo_ms = 0;
     for (;;) {
         vTaskDelayUntil(&last, pdMS_TO_TICKS(STATUS_INTERVAL_MS));
 
         xSemaphoreTake(mqtt_mutex, portMAX_DELAY);
         bool mqtt_up = mqtt.connected();
         xSemaphoreGive(mqtt_mutex);
+
+        // republish topology every 60 s — the website's tree must converge
+        // even when children reconnect via heartbeat alone (no announce)
+        if (mqtt_up && millis() - last_topo_ms >= 60000UL) {
+            last_topo_ms = millis();
+            publishTopology();
+        }
 
         xSemaphoreTake(registry_mutex, portMAX_DELAY);
         Serial.printf("\n--- STATUS  wifi=%s  mqtt=%s  nodes=%u ---\n",
