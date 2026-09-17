@@ -240,7 +240,7 @@ def handle_node_status(deploy, village, target_id, payload):
                           "node_id": target_id, "village": village})
 
 
-def handle_topology(deploy, village, payload):
+def handle_topology(deploy, village, node_id, payload):
     emit("topology", {"village": village, "topology": payload})
     db.villages.update_one(
         {"village": village},
