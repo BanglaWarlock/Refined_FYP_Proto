@@ -204,9 +204,10 @@ function seenAgo(iso) {
 /* ── Incremental state updates: patch cache, render locally ───────── */
 function patchNode(data) {
   const n = nodesCache.find((x) => x.node_id === data.node_id);
-  if (!n) return false;                       // unknown node → full refetch
+  if (!n) return false;
+  if (data.level != null) n.water_level = data.level;      // ← flood alerts
+  if (data.water_level != null) n.water_level = data.water_level; // ← heartbeats
   if (data.bat != null) n.bat = data.bat;
-  if (data.water_level != null) n.water_level = data.water_level;
   if (data.float_bits != null) n.float_bits = data.float_bits;
   if (data.lat != null) { n.lat = data.lat; n.lng = data.lng; n.gps_fix = true; }
   if (data.snr != null) n.snr = data.snr;
