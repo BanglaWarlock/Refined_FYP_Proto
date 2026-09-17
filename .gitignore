@@ -15,3 +15,5 @@ credentials.h
 Thumbs.db
 .idea/
 .vscode/
+
+sim/
