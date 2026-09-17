@@ -267,11 +267,16 @@ void loraTxTask(void *pv) {
                 uint32_t now = millis();
                 if (a.last_sent_ms == 0 ||
                     now - a.last_sent_ms >= ALERT_RETRY_MS + esp_random() % ALERT_JITTER_MS) {
-                    char raw[PACKET_MAX_LEN];
-                    uint64_t mid = new_msg_id();
-                    if (a.first_sent_ms == 0) a.first_sent_ms = now;
-                    a.last_sent_ms = now;
-                    a.sent_msg_id  = mid;
+                // in loraTxTask, alert branch:
+                char raw[PACKET_MAX_LEN];
+                uint64_t mid = new_msg_id();
+                if (a.first_sent_ms == 0) a.first_sent_ms = now;
+                a.last_sent_ms = now;
+                a.sent_msg_id  = mid;
+                char full_payload[PACKET_MAX_LEN];
+                snprintf(full_payload, sizeof(full_payload), "%s,seq=%lu",
+                        a.payload, (unsigned long)a.seq);
+                format_packet(raw, sizeof(raw), mid, NODE_ID, active_parent_id, a.type, full_payload);
                     format_packet(raw, sizeof(raw), mid, NODE_ID, active_parent_id, a.type, a.payload);
                     xSemaphoreGive(alert_mutex);
                     xSemaphoreTake(lora_mutex, portMAX_DELAY);

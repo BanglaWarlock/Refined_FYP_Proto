@@ -63,6 +63,36 @@ def ensure_indexes():
     db.master_nodes.create_index([("village", pymongo.ASCENDING)], unique=True)
     db.villages.create_index([("village", pymongo.ASCENDING)], unique=True)
     log.info("indexes ensured")
+    
+# ── Float sensor sanity: wetness must be monotonic from bottom up ──────────
+# bit0=1ft, bit1=2ft, bit2=3ft. A submerged high sensor implies the lower
+# ones. Anything else = stuck/failing float → publish a float_anomaly event.
+
+VALID_FLOAT_BITS = {0b000, 0b001, 0b011, 0b111}
+
+def check_float_anomaly(node_id: str, village: str, float_bits):
+    try:
+        bits = int(float_bits) & 0x07
+    except (TypeError, ValueError):
+        return 0            # unreadable — don't crash the pipeline over it
+    if bits in VALID_FLOAT_BITS:
+        return bits
+
+    wet     = [n for n in (1, 2, 3) if bits & (1 << (n - 1))]
+    dry     = [n for n in (1, 2, 3) if not bits & (1 << (n - 1))]
+    detail  = f"sensors {wet} wet but {dry} dry"
+    log.warning("FLOAT ANOMALY node=%s bits=0b%03b — %s", node_id, bits, detail)
+
+    data = {"node_id": node_id, "village": village,
+            "float_bits": bits, "detail": detail}
+    emit("float_anomaly", data)
+    try:
+        db.events.insert_one({"ts": now(), "type": "float_anomaly",
+                              "node_id": node_id, "village": village,
+                              "data": data})
+    except pymongo.errors.PyMongoError as e:
+        log.warning("float_anomaly DB write failed: %s", e)
+    return bits
 
 
 # ── Alert freshness: (node_id, type) -> last accepted seq (PROTOCOL §7) ────
@@ -83,20 +113,25 @@ def water_level_of(float_bits: int) -> int:
     return 0
 
 
+KNOWN_KINDS = {"heartbeat", "alert", "announce", "topology", "nodes", "master"}
+
 def parse_topic(topic: str):
     """floodwatch/[deploy/]village/rest... -> (deploy, village, [rest...]) or None."""
     parts = topic.split("/")
     if len(parts) < 3 or parts[0] != "floodwatch":
         return None
-    if len(parts) == 3:                      # floodwatch/village (bad)
-        return None
-    if len(parts) == 4:                      # floodwatch/village/type/node
+    if parts[1] in KNOWN_KINDS:              # floodwatch/village/type[/node]  (no deploy)
         return "", parts[1], parts[2:]
-    return parts[1], parts[2], parts[3:]     # floodwatch/deploy/village/...
+    if len(parts) == 3:                      # floodwatch/deploy/village — too short
+        return None
+    return parts[1], parts[2], parts[3:]     # floodwatch/deploy/village/rest...
 
 
 def emit(event_type: str, data: dict):
-    rds.publish("sse_events", json.dumps({"type": event_type, "data": data, "ts": now().isoformat()}))
+    try:
+        rds.publish("sse_events", json.dumps({"type": event_type, "data": data, "ts": now().isoformat()}))
+    except redis.RedisError as e:
+        log.warning("redis publish failed (%s): %s", event_type, e)
 
 
 def store_failed(topic: str, payload: str, reason: str):
@@ -108,8 +143,9 @@ def store_failed(topic: str, payload: str, reason: str):
 def handle_heartbeat(deploy, village, node_id, payload):
     # SSE event goes out BEFORE the DB writes — the stream must not wait on
     # Atlas round-trips (DB state catches up moments later)
+    bits = check_float_anomaly(node_id, village, payload.get("float_bits", 0))
     emit("heartbeat", {"node_id": node_id, "village": village, "deploy": deploy,
-                       "water_level": water_level_of(payload.get("float_bits", 0)),
+                       "water_level": water_level_of(bits), "float_bits": bits,
                        "bat": payload.get("bat"), "gps_fix": payload.get("gps_fix"),
                        "lat": payload.get("lat"), "lng": payload.get("lng")})
     db.river_nodes.update_one(
@@ -150,6 +186,7 @@ def handle_alert(deploy, village, node_id, payload):
 
     doc = {"ts": now(), "node_id": node_id, "village": village, "deploy": deploy, **payload}
     if atype == "flood":
+        check_float_anomaly(node_id, village, payload.get("float_bits", 0))
         emit("flood_level", {k: doc.get(k) for k in
              ("node_id", "village", "level", "float_bits", "lat", "lng")})
     elif atype == "node_lost":
@@ -213,20 +250,47 @@ def handle_topology(deploy, village, payload):
     )
 
 
+# Villages whose master is currently offline. While a village is in this set,
+# its river-node traffic is frozen: no online flips, no state updates.
+offline_villages: set[str] = set()
+
+
 def handle_master_status(deploy, village, payload):
     online = payload.get("status") == "online"
-    emit("master_online" if online else "master_offline", {"village": village, "deploy": deploy})
+    emit("master_online" if online else "master_offline",
+         {"village": village, "deploy": deploy})
+
+    if not online:
+        offline_villages.add(village)
+        # cascade: every node in this village goes offline
+        cursor = db.river_nodes.find({"village": village, "online": True},
+                                     {"node_id": 1})
+        affected = [doc["node_id"] for doc in cursor]
+        if affected:
+            db.river_nodes.update_many(
+                {"village": village, "online": True},
+                {"$set": {"online": False, "last_status_change": now()}})
+            for nid in affected:
+                emit("node_offline", {"node_id": nid, "village": village,
+                                      "deploy": deploy, "reason": "master_offline"})
+        log.warning("master %s OFFLINE — %d nodes marked offline", village, len(affected))
+    else:
+        offline_villages.discard(village)
+        log.info("master %s ONLINE — nodes resume via their own traffic", village)
+        # do NOT mass-flip nodes online here — let real heartbeats/announces do it,
+        # so the dashboard only shows nodes that are genuinely back.
+
     db.master_nodes.update_one(
         {"village": village},
         {"$set": {"village": village, "deploy": deploy, "online": online,
                   "node_id": payload.get("node_id"), "last_seen": now()}},
-        upsert=True,
-    )
+        upsert=True)
     db.villages.update_one({"village": village},
                            {"$set": {"village": village, "deploy": deploy,
                                      "online": online, "last_seen": now()}},
                            upsert=True)
-    db.events.insert_one({"ts": now(), "type": "master_online" if online else "master_offline",
+    db.events.insert_one({"ts": now(),
+                          "type": "master_online" if online else "master_offline",
                           "village": village})
 
 
@@ -247,12 +311,18 @@ def on_message(client, userdata, msg):
     if MQTT_DEPLOY and deploy and deploy != MQTT_DEPLOY:
         return
     kind = rest[0]
+    
+     # Frozen village: master is down — only master status / topology may update state
+    if village in offline_villages and kind not in ("master", "nodes", "topology"):
+        log.info("dropping %s from offline village %s", topic, village)
+        return store_failed(topic, raw, "village frozen (master offline)")
+
 
     try:
         if kind == "master" and len(rest) >= 2 and rest[1] == "status":
             return handle_master_status(deploy, village, json.loads(raw))
-        if kind == "nodes" and len(rest) >= 2 and rest[1] == "status":
-            return handle_node_status(deploy, village, rest[-1], json.loads(raw))
+        if kind == "nodes" and len(rest) >= 3 and rest[-1] == "status":
+            return handle_node_status(deploy, village, rest[1], json.loads(raw))
         node_id = rest[-1]
         payload = json.loads(raw)
         if node_id != payload.get("node_id"):
@@ -272,10 +342,15 @@ def on_connect(client, userdata, flags, rc, properties=None):
         client.subscribe("floodwatch/#", qos=1)
     else:
         log.error("connect failed rc=%s", rc)
-
+def seed_offline_villages():
+    for doc in db.master_nodes.find({"online": False}, {"village": 1}):
+        offline_villages.add(doc["village"])
+    if offline_villages:
+        log.info("seeded offline villages from DB: %s", offline_villages)
 
 def main():
     ensure_indexes()
+    seed_offline_villages() 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="floodwatch-parser")
     client.on_connect = on_connect
     client.on_message = on_message

@@ -77,13 +77,25 @@
     </div>
   </section>
 
-  <!-- ── Live alerts ───────────────────────────────────────────── -->
-  <section id="live" class="panel">
-    <div class="box">
-      <h2>Real-time event stream <span class="hint">(SSE — fires the moment a node reports)</span></h2>
-      <div id="feed"></div>
+<!-- ── Live alerts ───────────────────────────────────────────── -->
+<section id="live" class="panel">
+  <div class="box">
+    <h2>Real-time event stream <span class="hint">(SSE — fires the moment a node reports)</span></h2>
+    <div class="filter-row">
+      <select id="feed-filter">
+        <option value="">All events</option>
+        <option value="flood_level">🌊 Flood</option>
+        <option value="heartbeat">💧 Heartbeat</option>
+        <option value="node_offline">📴 Offline</option>
+        <option value="node_online">✅ Online</option>
+        <option value="battery">🔋 Battery</option>
+        <option value="gps_signal_lost">🛰️ GPS lost</option>
+      </select>
+      <label class="hint"><input type="checkbox" id="feed-hide-hb" checked> hide heartbeats</label>
     </div>
-  </section>
+    <div id="feed"></div>
+  </div>
+</section>
 
   <!-- ── Architecture ──────────────────────────────────────────── -->
   <section id="architecture" class="panel">

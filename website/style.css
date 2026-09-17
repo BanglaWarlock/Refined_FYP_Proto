@@ -49,16 +49,31 @@ main { flex: 1; padding: 24px 28px; max-width: 1400px; width: 100%; margin: 0 au
 .panel.active { display: block; }
 
 /* ── Map layout with side panel ──────────────────────────────── */
-.map-layout { display: grid; grid-template-columns: 1fr 330px; gap: 16px; }
-@media (max-width: 900px) { .map-layout { grid-template-columns: 1fr; } }
-#map-canvas {
-  height: 68vh; border-radius: 12px; border: 1px solid var(--line);
-  background: var(--panel); z-index: 0;
+.map-layout {
+  position: relative;
 }
+
+/* no grid anymore */
+#map-canvas {
+  height: 80vh;
+}
+
+/* was 68vh */
+
 #node-panel {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-  padding: 16px; align-self: start; box-shadow: var(--shadow);
-  max-height: 68vh; overflow-y: auto;
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1000;
+  width: 320px;
+  max-height: calc(80vh - 24px);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, .25);
+}
+
+@media (max-width: 700px) {
+  #node-panel {
+    width: calc(100% - 24px);
+  }
 }
 #node-panel.hidden { display: none; }
 .np-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }

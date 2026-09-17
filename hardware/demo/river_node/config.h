@@ -29,6 +29,7 @@
 #define BAT_SCALE      25.0f
 #define BAT_CAL        1.256f
 
-// GPS
-#define GPS_CAL_SAMPLES 100  // fixes averaged for the home position
-#define GPS_MOVE_THR_M  10.0f // movement alert threshold (metres)
+// config.h
+#define GPS_CAL_SAMPLES   200   // fixes averaged for the home position
+#define GPS_MOVE_THR_M    10.0f
+#define GPS_SAT_RESET_DELTA 2   // sat-count change ≥ this during cal → restart

@@ -20,8 +20,9 @@ const EVENT_ICON = {
   flood_level: "🌊", node_lost: "📡", node_offline: "📴", node_online: "✅",
   battery: "🔋", gps_signal_lost: "🛰️", gps_restored: "🛰️", gps_moved: "📍",
   node_announce: "📍", master_online: "🖥️", master_offline: "🖥️",
-  topology: "🕸️", heartbeat: "💧",
+  topology: "🕸️", heartbeat: "💧", float_anomaly: "⚠️", snapshot: "📦",
 };
+
 
 /* ── Theme ────────────────────────────────────────────────────────── */
 const themeBtn = $("#theme-btn");
@@ -199,9 +200,22 @@ function seenAgo(iso) {
   return `${Math.round(s / 3600)}h ago`;
 }
 
-async function refreshNodes() {
-  nodesCache = await (await fetch("/api/v1/nodes")).json();
+/* ── Incremental state updates: patch cache, render locally ───────── */
+function patchNode(data) {
+  const n = nodesCache.find((x) => x.node_id === data.node_id);
+  if (!n) return false;                       // unknown node → full refetch
+  if (data.bat != null) n.bat = data.bat;
+  if (data.water_level != null) n.water_level = data.water_level;
+  if (data.float_bits != null) n.float_bits = data.float_bits;
+  if (data.lat != null) { n.lat = data.lat; n.lng = data.lng; n.gps_fix = true; }
+  if (data.snr != null) n.snr = data.snr;
+  if (data.rssi != null) n.rssi = data.rssi;
+  if (typeof data.online === "boolean") n.online = data.online;
+  n.last_seen = data._ts ?? new Date().toISOString();
+  return true;
+}
 
+function renderNodes() {          
   // village filter dropdown (from live data — no villages, no options)
   const sel = $("#village-filter");
   const cur = sel.value;
@@ -234,6 +248,11 @@ async function refreshNodes() {
   }
 }
 
+async function refreshNodes() {   // fetch + render
+  nodesCache = await (await fetch("/api/v1/nodes")).json();
+  renderNodes();
+}
+
 async function refreshMasters() {
   const masters = await (await fetch("/api/v1/masters")).json();
   $("#masters").innerHTML = masters.length
@@ -260,6 +279,11 @@ function renderTree(node, depth) {
 
 /* ── Live event feed (SSE) ────────────────────────────────────────── */
 function addEvent(type, data, ts) {
+  // in addEvent(), at the top:
+  const f = $("#feed-filter")?.value ?? "";
+  const hideHb = $("#feed-hide-hb")?.checked ?? false;
+  if ((f && type !== f) || (hideHb && type === "heartbeat")) return;
+
   const feed = $("#feed");
   const when = ts ? new Date(ts).toLocaleTimeString() : new Date().toLocaleTimeString();
   // event age = browser receipt time minus the parser's original timestamp —
@@ -279,6 +303,23 @@ function addEvent(type, data, ts) {
   while (feed.children.length > 200) feed.lastChild.remove();
 }
 
+function updatePanelFromCache() {
+  const n = nodesCache.find((x) => x.node_id === selectedId);
+  if (!n || $("#node-panel").classList.contains("hidden")) return;
+  const lvl = n.water_level ?? 0;
+  const rows = $("#np-body").querySelectorAll(".np-row");
+  // rows: [0]=status [1]=water level [2]=battery [3]=link ... (matches selectNode order)
+  if (rows[0]) rows[0].querySelector("span:last-child").outerHTML =
+    `<span class="pill ${n.online ? "on" : "off"}">${n.online ? "online" : "offline"}</span>`;
+  if (rows[1]) rows[1].querySelector("span:last-child").outerHTML =
+    `<span class="pill L${lvl}">L${lvl} ${LEVEL_NAME[lvl]}</span>`;
+  if (rows[2] && n.bat != null) rows[2].querySelector("span:last-child").textContent =
+    n.bat.toFixed(2) + " V";
+  if (rows[3] && n.rssi != null) rows[3].querySelector("span:last-child").textContent =
+    `${n.rssi} dBm · SNR ${Math.round(n.snr ?? 0)} dB`;
+  if (rows[5]) rows[5].querySelector("span:last-child").textContent = seenAgo(n.last_seen?.$date ?? n.last_seen);
+}
+
 function connectSSE() {
   const es = new EventSource("/api/v1/events/stream");
   es.onopen  = () => setConn(true, "live");
@@ -288,13 +329,36 @@ function connectSSE() {
   // for untyped events, so we must listen per type (no wildcard support).
   const handle = (e) => {
     const evt = JSON.parse(e.data);
-    addEvent(evt.type ?? "message", evt.data ?? {}, evt.ts);
-    if (["heartbeat", "flood_level", "node_online", "node_offline"].includes(evt.type)) {
-      refreshStats(); refreshNodes();
-      if (evt.data?.node_id === selectedId) selectNode(selectedId);
-    }
-    if (["node_announce", "topology", "node_lost"].includes(evt.type)) {
-      refreshNodes(); refreshMasters();
+    addEvent(e.type || "message", evt.data ?? evt, evt._ts);
+    switch (e.type) {
+      case "snapshot":
+        nodesCache = evt.data.nodes ?? [];
+        renderNodes();
+        refreshMasters();          // refetch instead of a cache you don't have
+        break;
+
+      case "heartbeat":
+      case "flood_level":
+        if (patchNode(evt.data)) {
+          renderNodes();                       // local DOM rebuild, no network
+          if (evt.data.node_id === selectedId) updatePanelFromCache();
+        } else {
+          refreshNodes();                      // first sight of the node
+        }
+        break;
+
+      case "node_online":
+      case "node_offline":
+        if (patchNode(evt.data)) renderNodes(); else refreshNodes();
+        break;
+
+      case "announce":
+      case "topology":
+      case "master_online":
+      case "master_offline":
+      case "node_lost":
+        refreshNodes(); refreshMasters();        // rare events → refetch is fine
+        break;
     }
   };
   for (const t of Object.keys(EVENT_ICON)) es.addEventListener(t, handle);

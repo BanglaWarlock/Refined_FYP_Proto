@@ -73,7 +73,7 @@ def get_node(node_id: str):
 
 
 @app.get("/api/v1/nodes/{node_id}/readings")
-def node_readings(node_id: str, from_iso: str | None = Query(None, alias="from"), limit: int = 500):
+def node_readings(node_id: str, from_iso: str | None = Query(None, alias="from"), limit = max(1, min(limit, 2000))):
     q = {"node_id": node_id, **since_from(from_iso, 24)}
     cur = db.heartbeats.find(q, {"_id": 0}).sort("ts", -1).limit(min(limit, 2000))
     return list(cur)[::-1]   # oldest -> newest for charting
@@ -82,7 +82,7 @@ def node_readings(node_id: str, from_iso: str | None = Query(None, alias="from")
 @app.get("/api/v1/alerts")
 def list_alerts(village: str | None = None, node_id: str | None = None,
                 alert_type: str | None = None, from_iso: str | None = Query(None, alias="from"),
-                limit: int = 200):
+                limit = max(1, min(limit, 2000))):
     q = since_from(from_iso, 72)
     if village:     q["village"] = village
     if node_id:     q["node_id"] = node_id
@@ -94,7 +94,7 @@ def list_alerts(village: str | None = None, node_id: str | None = None,
 @app.get("/api/v1/events")
 def list_events(event_type: str | None = None, village: str | None = None,
                 node_id: str | None = None, from_iso: str | None = Query(None, alias="from"),
-                limit: int = 200):
+                limit = max(1, min(limit, 2000))):
     q = since_from(from_iso, 72)
     if event_type: q["type"] = event_type
     if village:    q["village"] = village
@@ -153,7 +153,8 @@ async def sse_stream(types: str | None = None):
                 evt = json.loads(msg["data"])
                 if want and evt.get("type") not in want:
                     continue
-                yield f"event: {evt.get('type', 'message')}\ndata: {json.dumps(evt['data'])}\n\n"
+                payload = {**evt["data"], "_ts": evt.get("ts")}
+                yield f"event: {evt.get('type', 'message')}\ndata: {json.dumps(payload)}\n\n"
         finally:
             await pubsub.unsubscribe(SSE_CHANNEL)
             await pubsub.close()

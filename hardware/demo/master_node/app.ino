@@ -24,11 +24,12 @@ registered_node *find_node(const char *id) {
 // Any frame from a child proves it alive — flips it online and clears the
 // offline clock. This is what makes reconnects "just work": registration,
 // announce, heartbeat and alerts all funnel through here.
-static void mark_alive(registered_node *n) {
+// Returns true if the node transitioned OFFLINE → ONLINE with this frame.
+static bool mark_alive(registered_node *n) {
     bool was_online = n->is_online;
     n->last_seen_ms = millis();
     n->is_online    = true;
-    if (!was_online) publish_node_status(n->node_id, true);
+    return !was_online;
 }
 
 static registered_node *get_or_create(const char *id) {
@@ -59,20 +60,25 @@ void handle_discover(const lora_packet *pkt) {
 
 void handle_reg_req(const lora_packet *pkt) {
     char claimed[NODE_ID_MAX_LEN];
-    // hard-validate — FIFO residue glued into the payload must never enter
-    // the registry (the "SUTS-001epth=0" bug)
     if (!get_field(pkt->payload, "id", claimed, sizeof(claimed)) || !id_valid(claimed)) {
         Serial.printf("[REG] Dropped — bad id from %s\n", pkt->src_id);
         return;
     }
 
+    bool registered = false;
+    xSemaphoreTake(registry_mutex, portMAX_DELAY);
     registered_node *n = get_or_create(claimed);
-    if (!n) {
+    if (n) {
+        n->is_online = false;   // flips online on next announce/heartbeat
+        n->depth     = 1;
+        registered   = true;
+    }
+    xSemaphoreGive(registry_mutex);
+
+    if (!registered) {
         Serial.printf("[REG] Dropped %s — registry full\n", claimed);
         return;
     }
-    n->is_online = false;      // flips online on the next announce/heartbeat
-    n->depth     = 1;
 
     char payload[80], raw[PACKET_MAX_LEN];
     snprintf(payload, sizeof(payload), "id=%s,parent=%s,depth=1", claimed, NODE_ID);
@@ -86,10 +92,13 @@ void handle_announce(const lora_packet *pkt) {
     double lat = 0.0, lng = 0.0;
     uint8_t depth = 1;
 
+    bool went_online = false; 
+
+
     xSemaphoreTake(registry_mutex, portMAX_DELAY);
     registered_node *n = get_or_create(pkt->src_id);
     if (n) {
-        mark_alive(n);
+        went_online = mark_alive(n);
         n->last_announce_ms = millis();
         n->snr = pkt->snr; n->rssi = pkt->rssi;
         if (get_field(pkt->payload, "depth",  buf, sizeof(buf))) n->depth = depth = (uint8_t)atoi(buf);
@@ -97,6 +106,8 @@ void handle_announce(const lora_packet *pkt) {
         if (get_field(pkt->payload, "lng",    buf, sizeof(buf))) n->lng = lng = atof(buf);
     }
     xSemaphoreGive(registry_mutex);
+
+    if (went_online) publish_node_status(pkt->src_id, true);
 
     send_ack(pkt);   // reliable — the child retries until this lands
 
@@ -120,10 +131,13 @@ void handle_hb(const lora_packet *pkt) {
     double lat = 0.0, lng = 0.0;
     bool gps_fix = false;
 
+        bool went_online = false; 
+
+
     xSemaphoreTake(registry_mutex, portMAX_DELAY);
     registered_node *n = get_or_create(pkt->src_id);
     if (n) {
-        mark_alive(n);
+        went_online = mark_alive(n);
         if (get_field(pkt->payload, "bat",        buf, sizeof(buf))) n->battery_voltage = atof(buf);
         if (get_field(pkt->payload, "float_bits", buf, sizeof(buf))) n->float_bits = (uint8_t)atoi(buf);
         if (get_field(pkt->payload, "depth",      buf, sizeof(buf))) n->depth = depth = (uint8_t)atoi(buf);
@@ -135,6 +149,9 @@ void handle_hb(const lora_packet *pkt) {
         link_snr = n->snr = pkt->snr; link_rssi = n->rssi = pkt->rssi;
     }
     xSemaphoreGive(registry_mutex);
+
+        if (went_online) publish_node_status(pkt->src_id, true);
+
 
     char base[64], topic[96], pl[320];
     topic_base(base, sizeof(base));
@@ -158,10 +175,12 @@ void handle_alert(const lora_packet *pkt) {
 
     bool stale = false;
     bool origin_gps_fix = false;
+        bool went_online = false; 
+
     xSemaphoreTake(registry_mutex, portMAX_DELAY);
     registered_node *orig = get_or_create(origin);
     if (orig) {
-        mark_alive(orig);
+        went_online = mark_alive(orig);
         origin_gps_fix = orig->gps_fix;
         if (aseq) {
             if (orig->last_alert_seq && aseq <= orig->last_alert_seq) stale = true;
@@ -169,6 +188,9 @@ void handle_alert(const lora_packet *pkt) {
         }
     }
     xSemaphoreGive(registry_mutex);
+
+        if (went_online) publish_node_status(pkt->src_id, true);
+
 
     send_ack(pkt);   // ACK the child whether fresh or stale — stop its retries
 

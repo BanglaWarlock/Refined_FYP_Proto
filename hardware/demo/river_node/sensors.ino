@@ -61,10 +61,10 @@ void gpsTask(void *pv) {
     uint8_t  last_led_gps = 0xFF;
 
     for (;;) {
+        int n = 0;
         while (gps_serial.available()) {
             if (gps.encode(gps_serial.read())) last_nmea_ms = millis();
-            // Serial.print("Read some gps)");
-            vTaskDelay(pdMS_TO_TICKS(1));
+            if (++n % 64 == 0) vTaskDelay(pdMS_TO_TICKS(1));
         }
         uint32_t now = millis();
         bool silent = (now > GPS_NMEA_TIMEOUT_MS) &&
@@ -74,6 +74,8 @@ void gpsTask(void *pv) {
 
         if (gps.location.isValid() && gps.location.isUpdated()) {
             gps_lat = gps.location.lat(); gps_lng = gps.location.lng();
+            int sats = gps.satellites.isValid() ? (int)gps.satellites.value() : 0;
+
             if (!gps_fix_valid) {
                 Serial.println("[GPS] Fix acquired");
                 if (gps_calibrated && gps_signal_lost_sent) send_alert_gps_fix_restored();
@@ -82,15 +84,31 @@ void gpsTask(void *pv) {
             gps_fix_valid = true; last_gps_fix_ms = now;
 
             if (!gps_calibrated) {
+                if (gps_cal_sat_baseline < 0) {
+                    // first fixes of this boot — anchor the baseline
+                    gps_cal_sat_baseline = sats;
+                    Serial.printf("[GPS CAL] started — baseline sats=%d\n", sats);
+                } else if (sats >= gps_cal_sat_baseline + GPS_CAL_SAT_RISE_RESET) {
+                    // constellation grew a lot — earlier samples may have been
+                    // low-confidence jumps; drops are fine, rises restart
+                    Serial.printf("[GPS CAL] RESTART — sats rose %d→%d\n",
+                                  gps_cal_sat_baseline, sats);
+                    gps_cal_count   = 0;
+                    gps_cal_lat_sum = 0.0;
+                    gps_cal_lng_sum = 0.0;
+                    gps_cal_sat_baseline = sats;
+                }
                 gps_cal_lat_sum += gps_lat;
                 gps_cal_lng_sum += gps_lng;
                 if (++gps_cal_count % 20 == 0)
-                    Serial.printf("[GPS CAL] %u/%u samples\n", gps_cal_count, (unsigned)GPS_CAL_SAMPLES);
+                    Serial.printf("[GPS CAL] %u/%u  sats=%d\n",
+                                  gps_cal_count, (unsigned)GPS_CAL_SAMPLES, sats);
                 if (gps_cal_count >= GPS_CAL_SAMPLES) {
                     gps_home_lat  = gps_cal_lat_sum / gps_cal_count;
                     gps_home_lng  = gps_cal_lng_sum / gps_cal_count;
                     gps_calibrated = true;
-                    Serial.printf("[GPS CAL] Complete — home=%.6f,%.6f\n", gps_home_lat, gps_home_lng);
+                    Serial.printf("[GPS CAL] Complete — home=%.6f,%.6f\n",
+                                  gps_home_lat, gps_home_lng);
                     if (node_state == NODE_OPERATIONAL) send_announce();
                 }
             } else {

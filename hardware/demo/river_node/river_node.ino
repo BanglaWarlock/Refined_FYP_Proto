@@ -115,10 +115,14 @@ bool     battery_low_sent     = false;
 bool     gps_fix_valid        = false;
 double   gps_lat              = 0.0, gps_lng = 0.0;
 uint32_t last_nmea_ms         = 0, last_gps_fix_ms = 0;
+// sensors.ino — replace the calibration state variables:
+
+double   gps_home_lat = 0.0, gps_home_lng = 0.0;
 bool     gps_calibrated       = false;
 uint16_t gps_cal_count        = 0;
 double   gps_cal_lat_sum      = 0.0, gps_cal_lng_sum = 0.0;
-double   gps_home_lat         = 0.0, gps_home_lng = 0.0;
+int      gps_cal_sat_baseline = -1;   // sat count when this calibration run started
+
 bool     gps_moved_sent       = false, gps_signal_lost_sent = false;
 char     pending_crash_reason[16] = "";
 

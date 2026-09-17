@@ -5,7 +5,7 @@ void send_announce() {
     char pl[PACKET_MAX_LEN];
     snprintf(pl, sizeof(pl), "id=%s,village=%s,depth=%u,parent=%s,lat=%.6f,lng=%.6f",
              NODE_ID, VILLAGE, own_depth, active_parent_id, gps_lat, gps_lng);
-    enqueueAlert(MSG_ALERT, ALERT_KEY_ANNOUNCE, pl);
+    enqueueAlert(MSG_ANNOUNCE, ALERT_KEY_ANNOUNCE, pl);\
     Serial.println("[ANNOUNCE] queued (reliable)");
 }
 
