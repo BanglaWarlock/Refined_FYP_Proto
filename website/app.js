@@ -341,10 +341,12 @@ function connectSSE() {
 
       case "heartbeat":
       case "flood_level":
-        if (patchNode(evt)) {                       // ← evt
+        if (patchNode(evt)) {
+        console.log("patchNode");   // ← evt
           renderNodes();
           if (evt.node_id === selectedId) updatePanelFromCache();
         } else {
+        console.log("refreshNodes");
           refreshNodes();
         }
         break;
