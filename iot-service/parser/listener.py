@@ -303,6 +303,17 @@ HANDLERS = {
 
 def on_message(client, userdata, msg):
     topic, raw = msg.topic, msg.payload.decode("utf-8", errors="replace")
+    try:
+        _dispatch(topic, raw)
+    except Exception as e:
+        log.exception("handler crash on %s", topic)
+        try:
+            store_failed(topic, raw, f"handler crash: {e}")
+        except Exception:
+            log.exception("failed_messages write also failed")
+
+
+def _dispatch(topic, raw):
     parsed = parse_topic(topic)
     if not parsed:
         return store_failed(topic, raw, "unrecognized topic shape")
@@ -310,12 +321,11 @@ def on_message(client, userdata, msg):
     if MQTT_DEPLOY and deploy and deploy != MQTT_DEPLOY:
         return
     kind = rest[0]
-    
-     # Frozen village: master is down — only master status / topology may update state
+
+    # Frozen village: master is down — only master status / topology may update state
     if village in offline_villages and kind not in ("master", "nodes", "topology"):
         log.info("dropping %s from offline village %s", topic, village)
         return store_failed(topic, raw, "village frozen (master offline)")
-
 
     try:
         if kind == "master" and len(rest) >= 2 and rest[1] == "status":
@@ -334,7 +344,6 @@ def on_message(client, userdata, msg):
     except (json.JSONDecodeError, KeyError, ValueError) as e:
         log.warning("failed to handle %s: %s", topic, e)
         store_failed(topic, raw, str(e))
-
 
 def on_connect(client, userdata, flags, rc, properties=None):
     if rc == 0:
