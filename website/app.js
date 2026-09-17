@@ -262,6 +262,10 @@ function renderTree(node, depth) {
 function addEvent(type, data, ts) {
   const feed = $("#feed");
   const when = ts ? new Date(ts).toLocaleTimeString() : new Date().toLocaleTimeString();
+  // event age = browser receipt time minus the parser's original timestamp —
+  // big numbers mean server-side lag, small numbers mean the pipeline is clean
+  const age = ts ? Math.max(0, Date.now() - new Date(ts).getTime()) : null;
+  const ageTxt = age != null ? (age < 1000 ? `+${age}ms` : `+${(age / 1000).toFixed(1)}s`) : "";
   const icon = EVENT_ICON[type] ?? "•";
   const detail = Object.entries(data)
     .filter(([k]) => k !== "deploy")
@@ -269,7 +273,7 @@ function addEvent(type, data, ts) {
     .map(([k, v]) => `${esc(k)}=${esc(typeof v === "number" ? Math.round(v * 1000) / 1000 : v)}`)
     .join("  ");
   const row = el("div", `evt ${type}`, `
-    <div class="t">${icon} ${esc(type)} · ${when}</div>
+    <div class="t">${icon} ${esc(type)} · ${when} <b>${ageTxt}</b></div>
     <div><b>${esc(data.node_id ?? data.village ?? "")}</b> ${detail ? `<span class="hint">${detail}</span>` : ""}</div>`);
   feed.prepend(row);
   while (feed.children.length > 200) feed.lastChild.remove();
