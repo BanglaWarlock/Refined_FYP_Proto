@@ -62,7 +62,7 @@ typedef struct {
 #define ALERT_KEY_ANNOUNCE   6
 
 // ── Timing (demo)
-#define HB_INTERVAL_MS        10000   // fire-and-forget heartbeat
+#define HB_INTERVAL_MS        60000   // fire-and-forget heartbeat
 #define ALERT_RETRY_MS         1000   // + jitter, until ACKed
 #define ALERT_JITTER_MS         300
 #define LINK_LOST_MS           30000   // all alerts un-ACKed this long → re-register

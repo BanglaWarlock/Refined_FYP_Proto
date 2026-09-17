@@ -68,7 +68,7 @@ def ensure_indexes():
 # ── Alert freshness: (node_id, type) -> last accepted seq (PROTOCOL §7) ────
 last_alert_seq: dict[tuple[str, str], int] = {}
 # seq==0 fallback cooldown per (node_id, type) — seconds
-ALERT_COOLDOWN_S = 30
+ALERT_COOLDOWN_S = 0
 last_alert_ts: dict[tuple[str, str], float] = {}
 
 

@@ -10,8 +10,8 @@
                                       // keep unique on public brokers; "" = no prefix level
 
 // WiFi backhaul
-#define WIFI_SSID      "aqib_2.4GHz@unifi"
-#define WIFI_PASS      "aqibmn7084"
+#define WIFI_SSID      "Lab@IOT"
+#define WIFI_PASS      "P@ss1234"
 
 // MQTT broker (public EMQX for the demo; your droplet Mosquitto later)
 #define MQTT_HOST      "broker.emqx.io"
@@ -29,4 +29,4 @@
 
 // Liveness: a child silent this long is published offline; its next
 // registration/announce/heartbeat flips it straight back online.
-#define NODE_OFFLINE_TIMEOUT_MS  45000
+#define NODE_OFFLINE_TIMEOUT_MS  185000

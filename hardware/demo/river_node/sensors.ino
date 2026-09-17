@@ -63,6 +63,7 @@ void gpsTask(void *pv) {
     for (;;) {
         while (gps_serial.available()) {
             if (gps.encode(gps_serial.read())) last_nmea_ms = millis();
+            // Serial.print("Read some gps)");
             vTaskDelay(pdMS_TO_TICKS(1));
         }
         uint32_t now = millis();
