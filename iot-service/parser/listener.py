@@ -301,9 +301,18 @@ HANDLERS = {
     "topology":  lambda d, v, n, p: handle_topology(d, v, n, p),
 }
 
-
 def on_message(client, userdata, msg):
     topic, raw = msg.topic, msg.payload.decode("utf-8", errors="replace")
+    try:
+        return _dispatch(client, topic, raw)
+    except Exception as e:
+        log.exception("handler crash on %s", topic)
+        try:
+            store_failed(topic, raw, f"handler crash: {e}")
+        except Exception:
+            log.exception("failed_messages write also failed")
+
+def _dispatch(client, userdata, msg):
     parsed = parse_topic(topic)
     if not parsed:
         return store_failed(topic, raw, "unrecognized topic shape")

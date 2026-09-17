@@ -108,7 +108,7 @@ def list_events(event_type: str | None = None, village: str | None = None,
 
 @app.get("/api/v1/villages")
 def list_villages():
-    return list(db.villages.find({}, {"_id": 0, "topology": 0}).sort("village", 1))
+    return list(db.villages.find({}, {"_id": 0}).sort("village", 1))
 
 
 @app.get("/api/v1/villages/{village}")
