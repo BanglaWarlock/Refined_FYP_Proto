@@ -91,9 +91,12 @@ void handle_reg_ack(const lora_packet *pkt) {
         char *c = strchr(cand, ','); if (c) *c = '\0';
         strlcpy(active_parent_id, cand, NODE_ID_MAX_LEN);
     }
-    last_parent_heartbeat();   // initialise link timers
+    last_parent_heartbeat();   // re-arm pending alerts for the fresh link
+    node_state = NODE_OPERATIONAL;
+    led_set_pattern(LED_OK);
     xSemaphoreGive(reg_ack_sem);
     Serial.printf("[REG] Registered — parent=%s depth=%u\n", active_parent_id, own_depth);
+    send_announce();
 }
 
 // Mark the link freshly established: re-arm pending alerts so they fire at
@@ -156,6 +159,8 @@ void discoveryTask(void *pv) {
         }
 
         case NODE_REGISTERING:
+            // success: handle_reg_ack already set NODE_OPERATIONAL, armed the
+            // link timers, and queued the announce
             if (xSemaphoreTake(reg_ack_sem, pdMS_TO_TICKS(REG_TIMEOUT_MS)) != pdTRUE) {
                 Serial.println("[DISC] REG_ACK timeout — re-discovering");
                 node_state = NODE_DISCOVERING;
