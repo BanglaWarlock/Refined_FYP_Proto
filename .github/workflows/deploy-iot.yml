@@ -56,7 +56,7 @@ jobs:
             "cd /opt/floodwatch && \
              docker compose build --pull && \
              docker compose up -d --remove-orphans && \
-             docker image prune -f && \ 
+             docker image prune -f && \
              docker compose up -d --force-recreate parser api && \
              docker restart floodwatch-website-1"
 
