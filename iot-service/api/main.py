@@ -183,5 +183,5 @@ async def sse_stream(types: str | None = None):
     #         await pubsub.unsubscribe(SSE_CHANNEL)
     #         await pubsub.close()
 
-    # return StreamingResponse(gen(), media_type="text/event-stream",
-    #                          headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
