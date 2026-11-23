@@ -46,7 +46,7 @@ jobs:
             "cat > /opt/floodwatch/.env <<'EOF'
           MONGO_URI=${{ secrets.MONGO_URI }}
           MQTT_BROKER=${{ secrets.MQTT_BROKER }}
-          MQTT_DEPLOY=${{ secrets.MQTT_DEPLOY }}
+          MQTT_DEPLOY=
           REDIS_URL=redis://redis:6379
           EOF"
 
@@ -56,7 +56,9 @@ jobs:
             "cd /opt/floodwatch && \
              docker compose build --pull && \
              docker compose up -d --remove-orphans && \
-             docker image prune -f"
+             docker image prune -f && \ 
+             docker compose up -d --force-recreate parser api && \
+             docker restart floodwatch-website-1"
 
       - name: Health check
         run: |
