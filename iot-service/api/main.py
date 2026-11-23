@@ -28,7 +28,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 mongo = pymongo.MongoClient(MONGO_URI)
 db    = mongo.get_default_database()
-rds   = aioredis.from_url(REDIS_URL, decode_responses=True)
+rds   = aioredis.from_url(REDIS_URL, decode_responses=True, max_connections=20)
 
 app = FastAPI(title="FloodWatch API", version="3.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -145,8 +145,8 @@ async def sse_stream(types: str | None = None):
 
     async def gen():
         pubsub = rds.pubsub()
-        await pubsub.subscribe(SSE_CHANNEL)
         try:
+            await pubsub.subscribe(SSE_CHANNEL)
             # keepalive comment every 15 s so proxies don't idle out
             while True:
                 msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=15.0)
@@ -158,9 +158,30 @@ async def sse_stream(types: str | None = None):
                     continue
                 payload = {**evt["data"], "_ts": evt.get("ts")}
                 yield f"event: {evt.get('type', 'message')}\ndata: {json.dumps(payload)}\n\n"
+        except asyncio.CancelledError:
+            pass                              # client disconnected — normal, not an error
         finally:
-            await pubsub.unsubscribe(SSE_CHANNEL)
-            await pubsub.close()
+            try:
+                await pubsub.aclose()         # releases the pub/sub connection
+            except Exception:
+                pass                          # cleanup must never be skipped
+    #     pubsub = rds.pubsub()
+    #     await pubsub.subscribe(SSE_CHANNEL)
+    #     try:
+    #         # keepalive comment every 15 s so proxies don't idle out
+    #         while True:
+    #             msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=15.0)
+    #             if msg is None:
+    #                 yield ": keepalive\n\n"
+    #                 continue
+    #             evt = json.loads(msg["data"])
+    #             if want and evt.get("type") not in want:
+    #                 continue
+    #             payload = {**evt["data"], "_ts": evt.get("ts")}
+    #             yield f"event: {evt.get('type', 'message')}\ndata: {json.dumps(payload)}\n\n"
+    #     finally:
+    #         await pubsub.unsubscribe(SSE_CHANNEL)
+    #         await pubsub.close()
 
-    return StreamingResponse(gen(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    # return StreamingResponse(gen(), media_type="text/event-stream",
+    #                          headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
